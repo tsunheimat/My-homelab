@@ -105,7 +105,7 @@ module "vscode-web" {
   accept_license = true
   readme         = file("README.md")
   display_name  = "VS Code Web"
-  icon          = "https://raw.githubusercontent.com/vscode-icons/vscode-icons/c5a78cdbd77d6c59e0331674e549eb07b0706307/icons/folder_type_vscode.svg"
+  icon          = "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/coder/templates/kubernetes/folder_type_vscode.svg"
   extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
 }
 
