@@ -115,6 +115,29 @@ module "vscode-web" {
   
 }
 
+#application: vscode2
+module "vscode-web2" {
+  count          = data.coder_workspace.me.start_count
+  source         = "registry.coder.com/coder/code-server/coder"
+  version        = "1.4.2"
+  agent_id       = coder_agent.main.id
+  subdomain      = false
+  additional_args = "--disable-workspace-trust"
+  open_in = "tab"
+  folder = "/home/coder/coder-${data.coder_workspace.me.name}"
+}
+
+#application: filebrowser
+module "filebrowser" {
+  count      = data.coder_workspace.me.start_count
+  source     = "registry.coder.com/coder/filebrowser/coder"
+  version    = "1.1.4"
+  agent_id   = coder_agent.main.id
+  agent_name = "main"
+  subdomain  = false
+}
+
+
 #main resource
 resource "coder_agent" "main" {
   os   = "linux"
@@ -260,17 +283,24 @@ resource "kubernetes_deployment" "main" {
         }
       }
       spec {
+        security_context {
+          run_as_user     = 1000
+          fs_group        = 1000
+          run_as_non_root = true
+        }
         container {
           name              = "dev"
           image             = "codercom/example-node:ubuntu"
           image_pull_policy = "Always"
           command = ["sh", "-c",<<EOF
-    # Create user and setup home directory
-    mkdir -p /home/coder/coder-${data.coder_workspace.me.name} && \
-    ${coder_agent.main.init_script}
-EOF
-]
-
+            # Create user and setup home directory
+            mkdir -p /home/coder/coder-${data.coder_workspace.me.name} && \
+            ${coder_agent.main.init_script}
+            EOF
+          ]
+          security_context {
+            run_as_user = "1000"
+          }
           env {
             name  = "CODER_AGENT_TOKEN"
             value = coder_agent.main.token
