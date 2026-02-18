@@ -12,6 +12,7 @@ terraform {
 provider "coder" {
 }
 
+#k8s-part
 variable "use_kubeconfig" {
   type        = bool
   description = <<-EOF
@@ -26,12 +27,14 @@ variable "use_kubeconfig" {
   default     = false
 }
 
+#k8s-part
 variable "namespace" {
   type        = string
   description = "The Kubernetes namespace to create workspaces in (must exist prior to creating workspaces). If the Coder host is itself running as a Pod on the same Kubernetes cluster as you are deploying workspaces to, set this to the same namespace."
   default = "coder"
 }
 
+#k8s-part
 data "coder_parameter" "cpu" {
   name         = "cpu"
   display_name = "CPU"
@@ -53,6 +56,7 @@ data "coder_parameter" "cpu" {
   }
 }
 
+#k8s-part
 data "coder_parameter" "memory" {
   name         = "memory"
   display_name = "Memory"
@@ -74,6 +78,7 @@ data "coder_parameter" "memory" {
   }
 }
 
+#k8s-part
 data "coder_parameter" "home_disk_size" {
   name         = "home_disk_size"
   display_name = "Home disk size"
@@ -88,6 +93,7 @@ data "coder_parameter" "home_disk_size" {
   }
 }
 
+#k8s-part
 provider "kubernetes" {
   # Authenticate via ~/.kube/config or a Coder-specific ServiceAccount, depending on admin preferences
   config_path = var.use_kubeconfig == true ? "~/.kube/config" : null
@@ -96,6 +102,7 @@ provider "kubernetes" {
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+#app: vscode
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
@@ -103,12 +110,11 @@ module "vscode-web" {
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
-  readme         = file("README.md")
-  display_name  = "VS Code Web"
-  icon          = "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/coder/templates/kubernetes/folder_type_vscode.svg"
+  display_name  = "Vscode - ${data.coder_workspace.me.name}"
   extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
 }
 
+#main resource
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
@@ -170,6 +176,8 @@ resource "coder_agent" "main" {
   }
 }
 
+
+#k8s storage
 resource "kubernetes_persistent_volume_claim" "home" {
   metadata {
     name      = "coder-${data.coder_workspace.me.name}"
@@ -198,6 +206,7 @@ resource "kubernetes_persistent_volume_claim" "home" {
   }
 }
 
+#k8s deploy
 resource "kubernetes_deployment" "main" {
   count = data.coder_workspace.me.start_count
   depends_on = [
