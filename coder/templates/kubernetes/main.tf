@@ -134,6 +134,7 @@ module "filebrowser" {
   version    = "1.1.4"
   agent_id   = coder_agent.main.id
   agent_name = "main"
+  folder   = "/home/coder/coder-${data.coder_workspace.me.name}"
   subdomain  = false
 }
 
