@@ -12,7 +12,7 @@ terraform {
 provider "coder" {
 }
 
-#k8s-part
+#k8s settings
 variable "use_kubeconfig" {
   type        = bool
   description = <<-EOF
@@ -27,14 +27,14 @@ variable "use_kubeconfig" {
   default     = false
 }
 
-#k8s-part
+#k8s settings
 variable "namespace" {
   type        = string
   description = "The Kubernetes namespace to create workspaces in (must exist prior to creating workspaces). If the Coder host is itself running as a Pod on the same Kubernetes cluster as you are deploying workspaces to, set this to the same namespace."
   default = "coder"
 }
 
-#k8s-part
+#k8s settings
 data "coder_parameter" "cpu" {
   name         = "cpu"
   display_name = "CPU"
@@ -56,7 +56,7 @@ data "coder_parameter" "cpu" {
   }
 }
 
-#k8s-part
+#k8s settings
 data "coder_parameter" "memory" {
   name         = "memory"
   display_name = "Memory"
@@ -78,7 +78,7 @@ data "coder_parameter" "memory" {
   }
 }
 
-#k8s-part
+#k8s settings
 data "coder_parameter" "home_disk_size" {
   name         = "home_disk_size"
   display_name = "Home disk size"
@@ -93,7 +93,7 @@ data "coder_parameter" "home_disk_size" {
   }
 }
 
-#k8s-part
+#k8s settings
 provider "kubernetes" {
   # Authenticate via ~/.kube/config or a Coder-specific ServiceAccount, depending on admin preferences
   config_path = var.use_kubeconfig == true ? "~/.kube/config" : null
@@ -102,7 +102,7 @@ provider "kubernetes" {
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-#app: vscode
+#application: vscode
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
@@ -110,8 +110,9 @@ module "vscode-web" {
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
-  display_name  = "Vscode - ${data.coder_workspace.me.name}"
+  display_name  = "Vscode - ${substr(data.coder_workspace.me.id, 0, 6)}"
   extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
+  workspace = "${substr(data.coder_workspace.me.id, 0, 6)}"
 }
 
 #main resource
@@ -180,11 +181,11 @@ resource "coder_agent" "main" {
 #k8s storage
 resource "kubernetes_persistent_volume_claim" "home" {
   metadata {
-    name      = "coder-${data.coder_workspace.me.name}"
+    name      = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
     namespace = var.namespace
     labels = {
-      "app.kubernetes.io/name"     = "coder-pvc"
-      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}"
+      "app.kubernetes.io/name"     = "coder-workspace-home"
+      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
       "app.kubernetes.io/part-of"  = "coder"
       //Coder-specific labels.
       "com.coder.resource"       = "true"
@@ -214,11 +215,11 @@ resource "kubernetes_deployment" "main" {
   ]
   wait_for_rollout = false
   metadata {
-    name      = "coder-${data.coder_workspace.me.id}"
+    name      = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
     namespace = var.namespace
     labels = {
       "app.kubernetes.io/name"     = "coder-workspace"
-      "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.name}"
+      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
       "app.kubernetes.io/part-of"  = "coder"
       "com.coder.resource"         = "true"
       "com.coder.workspace.id"     = data.coder_workspace.me.id
@@ -234,7 +235,7 @@ resource "kubernetes_deployment" "main" {
     selector {
       match_labels = {
         "app.kubernetes.io/name"     = "coder-workspace"
-        "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
+        "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
         "app.kubernetes.io/part-of"  = "coder"
         "com.coder.resource"         = "true"
         "com.coder.workspace.id"     = data.coder_workspace.me.id
@@ -250,7 +251,7 @@ resource "kubernetes_deployment" "main" {
       metadata {
         labels = {
           "app.kubernetes.io/name"     = "coder-workspace"
-          "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
+          "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
           "app.kubernetes.io/part-of"  = "coder"
           "com.coder.resource"         = "true"
           "com.coder.workspace.id"     = data.coder_workspace.me.id
@@ -280,7 +281,7 @@ resource "kubernetes_deployment" "main" {
             }
           }
           volume_mount {
-            mount_path = "/home/coder"
+            mount_path = "/home/coder-${substr(data.coder_workspace.me.id, 0, 6)}"
             name       = "home"
             read_only  = false
           }
