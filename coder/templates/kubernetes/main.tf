@@ -112,6 +112,7 @@ module "vscode-web" {
   accept_license = true
   display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
   extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
+  
 }
 
 #main resource
@@ -263,7 +264,12 @@ resource "kubernetes_deployment" "main" {
           name              = "dev"
           image             = "codercom/example-node:ubuntu"
           image_pull_policy = "Always"
-          command           = ["sh", "-c", coder_agent.main.init_script]
+          command = ["sh", "-c",<<EOF
+    # Create user and setup home directory
+    mkdir -p /home/coder/coder-${data.coder_workspace.me.name} && \
+    ${coder_agent.main.init_script}
+EOF
+]
 
           env {
             name  = "CODER_AGENT_TOKEN"
