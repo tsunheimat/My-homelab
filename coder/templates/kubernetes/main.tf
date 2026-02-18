@@ -110,9 +110,8 @@ module "vscode-web" {
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
-  display_name  = "Vscode - ${substr(data.coder_workspace.me.id, 0, 6)}"
+  display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
   extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
-  workspace = "${substr(data.coder_workspace.me.id, 0, 6)}"
 }
 
 #main resource
@@ -281,7 +280,7 @@ resource "kubernetes_deployment" "main" {
             }
           }
           volume_mount {
-            mount_path = "/home/coder-${substr(data.coder_workspace.me.id, 0, 6)}"
+            mount_path = "/home/coder"
             name       = "home"
             read_only  = false
           }
