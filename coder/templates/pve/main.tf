@@ -11,6 +11,8 @@ terraform {
 
 provider "coder" {}
 
+
+# pve setting
 provider "proxmox" {
   endpoint  = var.proxmox_api_url
   api_token = "${var.proxmox_api_token_id}=${var.proxmox_api_token_secret}"
@@ -28,83 +30,101 @@ provider "proxmox" {
   }
 }
 
+# pve setting
 variable "proxmox_api_url" {
   type = string
 }
 
+# pve setting
 variable "proxmox_api_token_id" {
   type      = string
   sensitive = true
 }
 
+# pve setting
 variable "proxmox_api_token_secret" {
   type      = string
   sensitive = true
 }
 
-
+# pve setting
 variable "proxmox_host" {
   description = "Proxmox node IP or DNS for SSH"
   type        = string
+  default = "10.0.10.211"
 }
 
+# pve setting
 variable "proxmox_password" {
   description = "Proxmox password (used for SSH)"
   type        = string
   sensitive   = true
 }
 
+# pve setting
 variable "proxmox_ssh_user" {
   description = "SSH username on Proxmox node"
   type        = string
   default     = "root"
 }
 
+# pve setting
 variable "proxmox_node" {
   description = "Target Proxmox node"
   type        = string
-  default     = "pve"
+  default     = "pve1"
 }
+
+# pve setting
 variable "disk_storage" {
   description = "Disk storage (e.g., local-lvm)"
   type        = string
-  default     = "local-lvm"
+  default     = "cd6"
 }
 
+# pve setting
 variable "snippet_storage" {
   description = "Storage with Snippets content"
   type        = string
-  default     = "local"
+  default     = "cloud"
 }
 
+# pve setting
 variable "bridge" {
   description = "Bridge (e.g., vmbr0)"
   type        = string
-  default     = "vmbr0"
+  default     = "vmbr40"
 }
 
+# pve setting
 variable "vlan" {
   description = "VLAN tag (0 none)"
   type        = number
-  default     = 0
+  default     = 130
 }
 
+# pve setting
 variable "clone_template_vmid" {
   description = "VMID of the cloud-init base template to clone"
   type        = number
+  default = 9511
 }
+
+
 
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# pve setting (to be set)
 data "coder_parameter" "cpu_cores" {
   name         = "cpu_cores"
   display_name = "CPU Cores"
   type         = "number"
-  default      = 2
+  default      = 4
   mutable      = true
 }
 
+# pve setting (to be set)
 data "coder_parameter" "memory_mb" {
   name         = "memory_mb"
   display_name = "Memory (MB)"
@@ -113,17 +133,27 @@ data "coder_parameter" "memory_mb" {
   mutable      = true
 }
 
-data "coder_parameter" "disk_size_gb" {
-  name         = "disk_size_gb"
-  display_name = "Disk Size (GB)"
+# pve setting (to be set)
+data "coder_parameter" "clone_vm_vmid" {
+  name         = "clone_vm_vmid"
+  display_name = "Clone VMID"
   type         = "number"
-  default      = 20
   mutable      = true
   validation {
-    min       = 10
-    max       = 100
+    min       = 1
+    max       = 100000
     monotonic = "increasing"
   }
+}
+
+
+# pve setting (to be set)
+data "coder_parameter" "memory_mb" {
+  name         = "memory_mb"
+  display_name = "Memory (MB)"
+  type         = "number"
+  default      = 4096
+  mutable      = true
 }
 
 resource "coder_agent" "dev" {
@@ -169,6 +199,8 @@ resource "coder_agent" "dev" {
   }
 }
 
+
+# pve setting (terraform)
 locals {
   hostname         = lower(data.coder_workspace.me.name)
   vm_name          = "coder-${lower(data.coder_workspace_owner.me.name)}-${local.hostname}"
@@ -184,6 +216,7 @@ locals {
   })
 }
 
+# pve setting (terraform)
 resource "proxmox_virtual_environment_file" "cloud_init_user_data" {
   content_type = "snippets"
   datastore_id = var.snippet_storage
@@ -195,9 +228,11 @@ resource "proxmox_virtual_environment_file" "cloud_init_user_data" {
   }
 }
 
+# pve setting (terraform)
 resource "proxmox_virtual_environment_vm" "workspace" {
   name      = local.vm_name
   node_name = var.proxmox_node
+  vmid      = data.coder_parameter.clone_vm_vmid.value
 
   clone {
     node_name = var.proxmox_node
@@ -211,7 +246,7 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   }
 
   on_boot = true
-  started = true
+  started = data.coder_workspace.me.transition == "start"
 
   startup {
     order = 1
@@ -250,6 +285,12 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     size         = data.coder_parameter.disk_size_gb.value
   }
 
+  disk {
+    interface    = "scsi0"
+    datastore_id = var.disk_storage
+    size         = data.coder_parameter.disk_size_gb.value
+  }
+
   initialization {
     type         = "nocloud"
     datastore_id = var.disk_storage
@@ -275,9 +316,3 @@ module "code-server" {
   agent_id = coder_agent.dev.id
 }
 
-module "cursor" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/cursor/coder"
-  version  = "1.3.0"
-  agent_id = coder_agent.dev.id
-}
