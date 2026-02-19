@@ -27,33 +27,31 @@ Run on the Proxmox node. This uses a RELEASE variable so you always pull a curre
 # Choose a release (e.g., jammy or noble)
 RELEASE=jammy
 IMG_URL="https://cloud-images.ubuntu.com/${RELEASE}/current/${RELEASE}-server-cloudimg-amd64.img"
-IMG_PATH="/var/lib/vz/template/iso/${RELEASE}-server-cloudimg-amd64.img"
+IMG_PATH="/mnt/nfs/zfs/template/iso/${RELEASE}-server-cloudimg-amd64.img"
 
 # Download cloud image
 wget "$IMG_URL" -O "$IMG_PATH"
 
-# Create base VM (example ID 999), enable QGA, correct boot order
+# Create base VM (example ID 9511), enable QGA, correct boot order
 NAME="ubuntu-${RELEASE}-cloudinit"
-qm create 999 --name "$NAME" --memory 4096 --cores 2 \
-  --net0 virtio,bridge=vmbr0 --agent enabled=1
-qm set 999 --scsihw virtio-scsi-pci
-qm importdisk 999 "$IMG_PATH" local-lvm
-qm set 999 --scsi0 local-lvm:vm-999-disk-0
-qm set 999 --ide2 local-lvm:cloudinit
-qm set 999 --serial0 socket --vga serial0
-qm set 999 --boot 'order=scsi0;ide2;net0'
+qm create 9511 --name "$NAME" --memory 4096 --cores 2 \
+  --net0 virtio,bridge=vmbr40,tag=30 --agent enabled=1
+qm set 9511 --scsihw virtio-scsi-pci
+qm importdisk 9511 "$IMG_PATH" cd6
+qm set 9511 --scsi0 cd6:9511/vm-9511-disk-0.raw
+qm set 9511 --ide2 cloud:cloudinit
+qm set 9511 --serial0 socket --vga serial0
+qm set 9511 --boot 'order=scsi0;ide2;net0'
 
-# Enable Snippets on storage 'local' (one‑time)
-pvesm set local --content snippets,vztmpl,backup,iso
 
 # Convert to template
-qm template 999
+qm template 9511
 ```
 
 Verify:
 
 ```bash
-qm config 999 | grep -E 'template:|agent:|boot:|ide2:|scsi0:'
+qm config 9511 | grep -E 'template:|agent:|boot:|ide2:|scsi0:'
 ```
 
 ### Enable Snippets via GUI
