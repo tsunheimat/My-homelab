@@ -138,6 +138,14 @@ module "filebrowser" {
   subdomain  = false
 }
 
+#application: opencode
+module "opencode" {
+  source   = "registry.coder.com/coder-labs/opencode/coder"
+  version  = "0.1.1"
+  agent_id = coder_agent.main.id
+  workdir  = "/home/coder/project"
+  subdomain  = false
+}
 
 #main resource
 resource "coder_agent" "main" {

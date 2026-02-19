@@ -312,7 +312,44 @@ resource "proxmox_virtual_environment_vm" "workspace" {
 module "code-server" {
   count    = data.coder_workspace.me.start_count
   source   = "registry.coder.com/coder/code-server/coder"
-  version  = "1.3.1"
+  version        = "1.4.2"
   agent_id = coder_agent.dev.id
+  additional_args = "--disable-workspace-trust"
+  extensions_dir = "/home/coder/.vscode-server/extensions"
 }
 
+#application: vscode
+module "vscode-web" {
+  count          = data.coder_workspace.me.start_count
+  source         = "registry.coder.com/coder/vscode-web/coder"
+  version        = "1.4.3"
+  agent_id       = coder_agent.main.id
+  subdomain      = false
+  accept_license = true
+  display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
+  extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
+  
+}
+
+#application: vscode2
+module "vscode-web2" {
+  count          = data.coder_workspace.me.start_count
+  source         = "registry.coder.com/coder/code-server/coder"
+  version        = "1.4.2"
+  agent_id       = coder_agent.main.id
+  subdomain      = false
+  additional_args = "--disable-workspace-trust"
+  open_in = "tab"
+  folder = "/home/coder/coder-${data.coder_workspace.me.name}"
+}
+
+#application: filebrowser
+module "filebrowser" {
+  count      = data.coder_workspace.me.start_count
+  source     = "registry.coder.com/coder/filebrowser/coder"
+  version    = "1.1.4"
+  agent_id   = coder_agent.main.id
+  agent_name = "main"
+  folder   = "/home/coder/coder-${data.coder_workspace.me.name}"
+  subdomain  = false
+}
