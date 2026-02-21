@@ -30,6 +30,7 @@
  * [blkey=iplc+gpt+NF+IPLC] 用+号添加多个关键词 保留节点名的自定义字段 需要区分大小写!
  * 如果需要修改 保留的关键词 替换成别的 可以用 > 分割 例如 [#blkey=GPT>新名字+其他关键词] 这将把【GPT】替换成【新名字】
  * 例如      https://raw.githubusercontent.com/Keywos/rule/main/rename.js#flag&blkey=GPT>新名字+NF
+ * [chincanada] 同时保留中国节点的地区/中转信息 以及 加拿大节点的城市信息 (如 Vancouver, Toronto 等)
  * [blgd]   保留: 家宽 IPLC ˣ² 等
  * [bl]     正则匹配保留 [0.1x, x0.2, 6x ,3倍]等标识
  * [nx]     保留1倍率与不显示倍率的
@@ -54,7 +55,8 @@ const nx = inArg.nx || false,
   addflag = inArg.flag || false,
   nm = inArg.nm || false,
   hkisp = inArg.hkisp || false,
-  cninfo = inArg.cninfo || false;
+  cninfo = inArg.cninfo || false,
+  chincanada = inArg.chincanada || false;
 
 const FGF = inArg.fgf == undefined ? " " : decodeURI(inArg.fgf),
   XHFGF = inArg.sn == undefined ? " " : decodeURI(inArg.sn),
@@ -299,7 +301,7 @@ function operator(pro) {
       }
       // cninfo: if the matched country is CN, extract region (city) and XX中转 from original node name
       let cnRegion = "", cnTransit = "";
-      if (cninfo) {
+      if (cninfo || chincanada) {
         const cnOutValues = [ZH[ZH.length - 1], EN[EN.length - 1], QC[QC.length - 1], FG[FG.length - 1]]; // 中国, CN, China, 🇨🇳
         if (cnOutValues.some((v) => findKeyValue === v || findKey[0] === v)) {
           const transitMatch = ens.match(cnTransitRegex);
@@ -313,8 +315,18 @@ function operator(pro) {
           }
         }
       }
+      // chincanada: if the matched country is Canada, extract the city/region from original node name
+      let caRegion = "";
+      if (chincanada) {
+        const caOutValues = [ZH[38], EN[38], QC[38], FG[38]]; // 加拿大, CA, Canada, 🇨🇦
+        if (caOutValues.some((v) => findKeyValue === v || findKey[0] === v)) {
+          // Match common Canadian city names (English)
+          const caCity = ens.match(/\b(Vancouver|Toronto|Montreal|Halifax|Calgary|Ottawa|Edmonton|Winnipeg|Quebec|Victoria|Hamilton|Waterloo|Kelowna|Burnaby|Surrey|Richmond|Mississauga|Brampton|London|Windsor|Saskatoon|Regina|Fredericton|Charlottetown|St\.?\s?John'?s?|Moncton|Thunder Bay|Sudbury|Kitchener)\b/i);
+          if (caCity) caRegion = caCity[0];
+        }
+      }
       keyover = keyover
-        .concat(firstName, usflag, nNames, findKeyValue, ispName, cnRegion, cnTransit, retainKey, ikey, ikeys)
+        .concat(firstName, usflag, nNames, findKeyValue, ispName, cnRegion, cnTransit, caRegion, retainKey, ikey, ikeys)
         .filter((k) => k !== "");
       e.name = keyover.join(FGF);
     } else {
