@@ -1,4 +1,4 @@
-orginal script location: https://github.com/Keywos/rule/blob/main/rename.js
+edit from : https://raw.githubusercontent.com/Keywos/rule/main/rename.js
 
 Sub-Store 節點重新命名與清洗腳本
 ====================
@@ -11,6 +11,7 @@ Sub-Store 節點重新命名與清洗腳本
 * **多模式辨識**：自動辨識中文、英文全名、英文縮寫、國旗圖示等多種格式的節點名稱。
 * **格式統一**：將節點統一重新命名為 `國旗 + 國家名 + 序號` 的標準格式（例如：`🇭🇰 香港 01` 或 `🇺🇸 US 01`）。
 * **智慧保留**：支援保留特定關鍵字（如 IPLC、IEPL）、倍率（1.5x）、以及自訂的線路識別。
+* **進階資訊提取**：支援提取並保留香港 ISP（如 PCCW, HKT）、中國地區與中轉資訊，以及加拿大城市等進階區域資訊。
 * **關鍵字替換**：支援在保留關鍵字的同時進行重新命名（例如將 `GPT` 替換為 `OpenAI`）。
 * **垃圾清洗**：自動過濾包含「到期」、「官網」、「剩餘流量」等無效節點。
 * **自動去重與排序**：自動為同名節點新增序號，並支援將優質線路（如專線）排在前面。
@@ -62,6 +63,9 @@ https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/
 | **`nx`** | **保留全部倍率節點**<br><br> <br><br>保留1倍率和不顯示倍率的節點（通常配合過濾邏輯使用）。 | `#nx` |
 | **`blnx`** | **只保留高倍率**<br><br> <br><br>只保留名稱中帶有高倍率標識的節點，過濾掉普通節點。 | `#blnx` |
 | **`clear`** | **清理垃圾節點**<br><br> <br><br>過濾包含「到期」、「剩餘」、「官網」、「群組」、「客服」等關鍵字的節點。 | `#clear` |
+| **`hkisp`** | **保留香港 ISP**<br><br> <br><br>在香港節點名稱中提取並保留常見 ISP 名稱（如 HKBN, PCCW, HKT 等）。 | `#hkisp` |
+| **`cninfo`** | **保留中國資訊**<br><br> <br><br>在中國節點名稱中提取並保留城市名稱與中轉資訊（如南亞中轉）。 | `#cninfo` |
+| **`chincanada`** | **保留中/加位置資訊**<br><br> <br><br>同時保留中國節點的地區/中轉資訊，以及加拿大節點的城市資訊。 | `#chincanada` |
 | **`blockquic`** | **QUIC 控制**<br><br> <br><br>強行開啟或關閉節點的 QUIC 設定。 <br><br> <br><br>可選值：`on`, `off`。 | `#blockquic=off` |
 
 ### 4\. 排序
@@ -87,7 +91,7 @@ https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/
 
 #### 場景 2：英文簡寫 + 國旗 + 保留倍率 + 保留專線標識
 
-_輸入：_ `[機場] Hong Kong IPLC 專線 1.5x` _輸出：_ `🇭🇰 HK IPLC 1.5× 01`
+_輸入：_ `[機場] Hong Kong IPLC 專線 1.5x` _輸出：_ `🇭🇰 1.5× HK IPLC 01`
 
 ```
 #out=us&flag&bl&blkey=IPLC
