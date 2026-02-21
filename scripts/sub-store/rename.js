@@ -52,7 +52,8 @@ const nx = inArg.nx || false,
   debug = inArg.debug || false,
   clear = inArg.clear || false,
   addflag = inArg.flag || false,
-  nm = inArg.nm || false;
+  nm = inArg.nm || false,
+  hkisp = inArg.hkisp || false;
 
 const FGF = inArg.fgf == undefined ? " " : decodeURI(inArg.fgf),
   XHFGF = inArg.sn == undefined ? " " : decodeURI(inArg.sn),
@@ -92,6 +93,8 @@ const nameblnx = /(高倍|(?!1)2+(x|倍)|ˣ²|ˣ³|ˣ⁴|ˣ⁵|ˣ¹⁰)/i;
 const namenx = /(高倍|(?!1)(0\.|\d)+(x|倍)|ˣ²|ˣ³|ˣ⁴|ˣ⁵|ˣ¹⁰)/i;
 const keya =
   /港|Hong|HK|新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR|🇸🇬|🇭🇰|🇯🇵|🇺🇸|🇰🇷|🇹🇷/i;
+// HK ISP keywords to detect and preserve when hkisp is enabled
+const hkIspRegex = /\b(PCCW|HGC|HKBN|HKIX|CMI|CU|CT|CTC|CTG|NTT|IPLC|IEPL|BGP|Equinix|Zenlayer|Cogent|Telstra|TATA|AWS|GCP|Azure|Cloudflare|Akari|SoftBank|KDDI|Lumen|HE|Hurricane|Premiere|WTT|UNITITI|Unicom|Telecom|Mobile|HKT|PCCW-HKT|CTM|Wharf|i3|IHC)\b/gi;
 const keyb =
   /(((1|2|3|4)\d)|(香港|Hong|HK) 0[5-9]|((新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR) 0[3-9]))/i;
 const rurekey = {
@@ -276,8 +279,21 @@ function operator(pro) {
           usflag = usflag === "🇹🇼" ? "🇨🇳" : usflag;
         }
       }
+      // hkisp: if the matched country is HK, extract ISP name from original node name
+      let ispName = "";
+      if (hkisp) {
+        const hkOutValues = [ZH[0], EN[0], QC[0], FG[0]]; // 香港, HK, Hong Kong, 🇭🇰
+        if (hkOutValues.some((v) => findKeyValue === v || findKey[0] === v)) {
+          hkIspRegex.lastIndex = 0;
+          const ispMatch = ens.match(hkIspRegex);
+          if (ispMatch) {
+            // deduplicate and join multiple ISP tokens
+            ispName = [...new Set(ispMatch.map((s) => s.toUpperCase()))].join("-");
+          }
+        }
+      }
       keyover = keyover
-        .concat(firstName, usflag, nNames, findKeyValue, retainKey, ikey, ikeys)
+        .concat(firstName, usflag, nNames, findKeyValue, ispName, retainKey, ikey, ikeys)
         .filter((k) => k !== "");
       e.name = keyover.join(FGF);
     } else {
