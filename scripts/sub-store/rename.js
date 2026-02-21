@@ -53,7 +53,8 @@ const nx = inArg.nx || false,
   clear = inArg.clear || false,
   addflag = inArg.flag || false,
   nm = inArg.nm || false,
-  hkisp = inArg.hkisp || false;
+  hkisp = inArg.hkisp || false,
+  cninfo = inArg.cninfo || false;
 
 const FGF = inArg.fgf == undefined ? " " : decodeURI(inArg.fgf),
   XHFGF = inArg.sn == undefined ? " " : decodeURI(inArg.sn),
@@ -95,6 +96,10 @@ const keya =
   /港|Hong|HK|新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR|🇸🇬|🇭🇰|🇯🇵|🇺🇸|🇰🇷|🇹🇷/i;
 // HK ISP keywords to detect and preserve when hkisp is enabled
 const hkIspRegex = /\b(PCCW|HGC|HKBN|HKIX|CMI|CU|CT|CTC|CTG|NTT|IPLC|IEPL|BGP|Equinix|Zenlayer|Cogent|Telstra|TATA|AWS|GCP|Azure|Cloudflare|Akari|SoftBank|KDDI|Lumen|HE|Hurricane|Premiere|WTT|UNITITI|Unicom|Telecom|Mobile|HKT|PCCW-HKT|CTM|Wharf|i3|IHC)\b/gi;
+// CN region: match Chinese city/region names (2-4 Han characters that are NOT 中转 itself)
+const cnRegionRegex = /[\u4e00-\u9fff]{2,4}(?=\s|$|\d|[A-Za-z]|中转)/;
+// CN transit: match XX中转 patterns (e.g. 南亚中转, 欧洲中转, 东亚中转)
+const cnTransitRegex = /[\u4e00-\u9fff]{1,4}中转/;
 const keyb =
   /(((1|2|3|4)\d)|(香港|Hong|HK) 0[5-9]|((新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR) 0[3-9]))/i;
 const rurekey = {
@@ -292,8 +297,24 @@ function operator(pro) {
           }
         }
       }
+      // cninfo: if the matched country is CN, extract region (city) and XX中转 from original node name
+      let cnRegion = "", cnTransit = "";
+      if (cninfo) {
+        const cnOutValues = [ZH[ZH.length - 1], EN[EN.length - 1], QC[QC.length - 1], FG[FG.length - 1]]; // 中国, CN, China, 🇨🇳
+        if (cnOutValues.some((v) => findKeyValue === v || findKey[0] === v)) {
+          const transitMatch = ens.match(cnTransitRegex);
+          if (transitMatch) cnTransit = transitMatch[0];
+          // Try to find a region: scan original name for a Chinese city token that is not a known country/transit word
+          const skipWords = /中国|大陆|中转|南亚|东亚|欧洲|北美|东南亚|中亚|非洲|南美/;
+          const regionMatch = ens.match(/[\u4e00-\u9fff]{2,4}/g);
+          if (regionMatch) {
+            const region = regionMatch.find((w) => !skipWords.test(w));
+            if (region) cnRegion = region;
+          }
+        }
+      }
       keyover = keyover
-        .concat(firstName, usflag, nNames, findKeyValue, ispName, retainKey, ikey, ikeys)
+        .concat(firstName, usflag, nNames, findKeyValue, ispName, cnRegion, cnTransit, retainKey, ikey, ikeys)
         .filter((k) => k !== "");
       e.name = keyover.join(FGF);
     } else {
