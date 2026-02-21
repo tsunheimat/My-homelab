@@ -21,7 +21,7 @@ orginal script location: https://github.com/Keywos/rule/blob/main/rename.js
 **基本语法：**
 
 ```url
-https://你的脚本地址/rename.js#参数1&参数2=值&参数3
+https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/rename.js#参数1&参数2=值&参数3
 
 ```
 
