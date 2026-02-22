@@ -19,6 +19,42 @@ proxies:
   - { name: 直连, type: direct }
 
 listeners:
+  # hk port: 22000-22999
+  #ednovas
+  - name: "ednovas-hk1"
+    port: 22211
+    type: mixed
+    listen: 0.0.0.0
+    proxy: "ednovas-hk1"
+  - name: "ednovas-hk2"
+    port: 22212
+    type: mixed
+    proxy: "ednovas-hk2"
+  - name: "ednovas-hk3"
+    port: 22213
+    type: mixed
+    proxy: "ednovas-hk3"
+  - name: "ednovas-hk4"
+    port: 22214
+    type: mixed
+    proxy: "ednovas-hk4"
+  #nonesun
+  - name: "nonesun-hk1"
+    port: 22511
+    type: mixed
+    proxy: "nonesun-hk1"
+  - name: "nonesun-hk2"
+    port: 22512
+    type: mixed
+    proxy: "nonesun-hk2"
+  - name: "nonesun-hk3"
+    port: 22513
+    type: mixed
+    proxy: "nonesun-hk3"
+  - name: "nonesun-hk4"
+    port: 22514
+    type: mixed
+    proxy: "nonesun-hk4"
   # us port: 23000-23999
   #ednovas
   - name: "ednovas-us1"
@@ -56,42 +92,19 @@ listeners:
     port: 23711
     type: mixed
     proxy: "vps-us1"
-  # hk port: 22000-22999
+  # tw port: 24000-24999
   #ednovas
-  - name: "ednovas-hk1"
-    port: 22211
+  - name: "ednovas-tw1"
+    port: 24211
     type: mixed
     listen: 0.0.0.0
-    proxy: "ednovas-hk1"
-  - name: "ednovas-hk2"
-    port: 22212
-    type: mixed
-    proxy: "ednovas-hk2"
-  - name: "ednovas-hk3"
-    port: 22213
-    type: mixed
-    proxy: "ednovas-hk3"
-  - name: "ednovas-hk4"
-    port: 22214
-    type: mixed
-    proxy: "ednovas-hk4"
+    proxy: "ednovas-tw1"
   #nonesun
-  - name: "nonesun-hk1"
-    port: 22511
+  - name: "nonesun-tw1"
+    port: 24511
     type: mixed
-    proxy: "nonesun-hk1"
-  - name: "nonesun-hk2"
-    port: 22512
-    type: mixed
-    proxy: "nonesun-hk2"
-  - name: "nonesun-hk3"
-    port: 22513
-    type: mixed
-    proxy: "nonesun-hk3"
-  - name: "nonesun-hk4"
-    port: 22514
-    type: mixed
-    proxy: "nonesun-hk4"
+    proxy: "nonesun-tw1"
+
 # 全局配置
 mixed-port: 7890
 allow-lan: true
@@ -666,10 +679,23 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*NoneSun)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
-
+  - {
+      name: ednovas-tw1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*EdNovas)(?=.*(🇹🇼|台湾))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: nonesun-tw1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*NoneSun)(?=.*(🇹🇼|台湾))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
 # 规则匹配
 rules:
   - RULE-SET,private_ip,直连,no-resolve
+  - DOMAIN-KEYWORD,tsunhei,DIRECT
+  - MATCH,直连
 
 # 规则集
 ## type：可选http/file/inline  behavior：可选domain/ipcidr/classical format：可选yaml/text/mrs
