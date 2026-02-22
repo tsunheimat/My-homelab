@@ -95,7 +95,7 @@ const valueArray = ["2×", "3×", "4×", "5×", "6×", "7×", "8×", "9×", "10�
 const nameblnx = /(高倍|(?!1)2+(x|倍)|ˣ²|ˣ³|ˣ⁴|ˣ⁵|ˣ¹⁰)/i;
 const namenx = /(高倍|(?!1)(0\.|\d)+(x|倍)|ˣ²|ˣ³|ˣ⁴|ˣ⁵|ˣ¹⁰)/i;
 const keya =
-  /港|Hong|HK|新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR|🇸🇬|🇭🇰|🇯🇵|🇺🇸|🇰🇷|🇹🇷/i;
+  /港|Hong|HK|新加坡|SG|Singapore|日本|Japan|JP|美国|United States|US|韩|土耳其|TR|Turkey|Korea|KR|台湾|Taiwan|TW|🇸🇬|🇭🇰|🇯🇵|🇺🇸|🇰🇷|🇹🇼/i;
 // HK ISP keywords to detect and preserve when hkisp is enabled
 const hkIspRegex = /\b(PCCW|HGC|HKBN|HKIX|CMI|CU|CT|CTC|CTG|NTT|IPLC|IEPL|BGP|Equinix|Zenlayer|Cogent|Telstra|TATA|AWS|GCP|Azure|Cloudflare|Akari|SoftBank|KDDI|Lumen|HE|Hurricane|Premiere|WTT|UNITITI|Unicom|Telecom|Mobile|HKT|PCCW-HKT|CTM|Wharf|i3|IHC)\b/gi;
 // CN region: match Chinese city/region names (2-4 Han characters that are NOT 中转 itself)
@@ -283,7 +283,6 @@ function operator(pro) {
         const index = outList.indexOf(findKeyValue);
         if (index !== -1) {
           usflag = FG[index];
-          usflag = usflag === "🇹🇼" ? "🇨🇳" : usflag;
         }
       }
       // hkisp: if the matched country is HK, extract ISP name from original node name
