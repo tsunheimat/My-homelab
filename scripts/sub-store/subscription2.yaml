@@ -26,10 +26,6 @@ listeners:
     type: mixed
     listen: 0.0.0.0
     proxy: "ednovas-hk1"
-  - name: "ednovas-hk2"
-    port: 22212
-    type: mixed
-    proxy: "ednovas-hk2"
   - name: "ednovas-hk3"
     port: 22213
     type: mixed
@@ -675,12 +671,6 @@ proxy-groups:
     }
   - {
       name: ednovas-hk1,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-hk2,
       type: select,
       include-all: true,
       filter: "^(?=.*EdNovas)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
