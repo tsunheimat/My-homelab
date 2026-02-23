@@ -92,6 +92,14 @@ listeners:
     port: 23711
     type: mixed
     proxy: "vps-us1"
+  - name: "vps-us2"
+    port: 23712
+    type: mixed
+    proxy: "vps-us2"
+  - name: "vps-us3"
+    port: 23713
+    type: mixed
+    proxy: "vps-us3"
   # tw port: 24000-24999
   #ednovas
   - name: "ednovas-tw1"
@@ -104,6 +112,28 @@ listeners:
     port: 24511
     type: mixed
     proxy: "nonesun-tw1"
+  # sg port: 25000-25999
+  #vps
+  - name: "vps-sg1"
+    port: 25711
+    type: mixed
+    proxy: "vps-sg1"
+  - name: "vps-sg1"
+    port: 25711
+    type: mixed
+    proxy: "vps-sg1"
+  - name: "vps-sg2"
+    port: 25712
+    type: mixed
+    proxy: "vps-sg2"
+  - name: "vps-sg3"
+    port: 25713
+    type: mixed
+    proxy: "vps-sg3"
+  - name: "vps-sg4"
+    port: 25714
+    type: mixed
+    proxy: "vps-sg4"
 
 # 全局配置
 mixed-port: 7890
@@ -632,6 +662,18 @@ proxy-groups:
       filter: "^(?=.*Vps)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
   - {
+      name: vps-us2,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: vps-us3,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
       name: ednovas-hk1,
       type: select,
       include-all: true,
@@ -690,6 +732,30 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*NoneSun)(?=.*(🇹🇼|台湾))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: vps-sg1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: vps-sg2,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: vps-sg3,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: vps-sg4,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Vps)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
     }
 # 规则匹配
 rules:
