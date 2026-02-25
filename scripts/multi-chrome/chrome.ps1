@@ -99,7 +99,23 @@ foreach ($n in $array) {
 
     $Shortcut.Description = "Chrome Profile $x"
 
-    $IconPath = Join-Path $PSScriptRoot "icons\icon_$x.ico"
+    $IconDir = Join-Path $PSScriptRoot "icons"
+    if (!(Test-Path $IconDir)) {
+        New-Item -ItemType Directory -Path $IconDir -Force | Out-Null
+    }
+
+    $IconPath = Join-Path $IconDir "icon_$x.ico"
+    if (!(Test-Path $IconPath)) {
+        $IconUrl = "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/multi-chrome/icons/icon_$x.ico"
+        try {
+            Write-Host "  [INFO] Downloading icon for profile $x from GitHub..." -ForegroundColor Cyan
+            # Use basic parsing for compatibility 
+            Invoke-WebRequest -Uri $IconUrl -OutFile $IconPath -UseBasicParsing | Out-Null
+        } catch {
+            Write-Host "  [WARNING] Failed to download icon for profile $x." -ForegroundColor Yellow
+        }
+    }
+
     if (Test-Path $IconPath) {
         $Shortcut.IconLocation = $IconPath
     }
