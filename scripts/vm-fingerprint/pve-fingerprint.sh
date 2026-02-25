@@ -137,7 +137,12 @@ conf_del() {
 # Parse smbios1 field
 smbios_get_field() {
     local smbios_line=$1 field=$2
-    echo "$smbios_line" | grep -oP "${field}=[^,]*" | sed "s/${field}=//"
+    local val
+    val=$(echo "$smbios_line" | grep -oP "${field}=[^,]*" | sed "s/${field}=//")
+    if echo "$smbios_line" | grep -q "base64=1" && [[ -n "$val" && "$field" != "uuid" && "$field" != "base64" ]]; then
+        val=$(echo "$val" | base64 -d 2>/dev/null || echo "$val")
+    fi
+    echo "$val"
 }
 
 # Build smbios1 line from associative values
@@ -547,28 +552,33 @@ edit_qemu_args() {
     # Remove existing smbios args, keep others
     local clean_args=$(echo "$current_args" | sed 's/-smbios [^ ]*//g' | xargs)
 
+    local smbios=$(conf_get "$vmid" "smbios1")
+    local s_mfr=$(smbios_get_field "$smbios" "manufacturer")
+    local s_prod=$(smbios_get_field "$smbios" "product")
+    local s_sku=$(smbios_get_field "$smbios" "sku")
+
     case "$choice" in
         1)
             local bios_vendor="American Megatrends Inc."
             local bios_version="$(( RANDOM % 5 + 1 )).$(( RANDOM % 30 ))$(rand_serial 1)"
             local bios_date="$(( RANDOM % 12 + 1 ))/$(( RANDOM % 28 + 1 ))/$(( RANDOM % 4 + 2021 ))"
-            local new_arg="-smbios type=0,vendor=${bios_vendor},version=${bios_version},date=${bios_date}"
+            local new_arg="-smbios \"type=0,vendor=${bios_vendor},version=${bios_version},date=${bios_date}\""
             conf_set "$vmid" "args" "${clean_args} ${new_arg}"
             print_ok "BIOS: ${bios_vendor} v${bios_version} (${bios_date})"
             ;;
         2)
-            local board_mfr="ASUSTeK COMPUTER INC."
-            local board_prod="PRIME B550M-A"
+            local board_mfr="${s_mfr:-ASUSTeK COMPUTER INC.}"
+            local board_prod="${s_prod:-PRIME B550M-A}"
             local board_serial=$(rand_serial 12)
-            local new_arg="-smbios type=2,manufacturer=${board_mfr},product=${board_prod},serial=${board_serial}"
+            local new_arg="-smbios \"type=2,manufacturer=${board_mfr},product=${board_prod},serial=${board_serial}\""
             conf_set "$vmid" "args" "${clean_args} ${new_arg}"
             print_ok "Baseboard: ${board_mfr} ${board_prod} (${board_serial})"
             ;;
         3)
-            local chassis_mfr="Default string"
+            local chassis_mfr="${s_mfr:-Default string}"
             local chassis_serial=$(rand_serial 12)
-            local chassis_sku="Default string"
-            local new_arg="-smbios type=3,manufacturer=${chassis_mfr},serial=${chassis_serial},sku=${chassis_sku}"
+            local chassis_sku="${s_sku:-Default string}"
+            local new_arg="-smbios \"type=3,manufacturer=${chassis_mfr},serial=${chassis_serial},sku=${chassis_sku}\""
             conf_set "$vmid" "args" "${clean_args} ${new_arg}"
             print_ok "Chassis serial: ${chassis_serial}"
             ;;
@@ -576,13 +586,15 @@ edit_qemu_args() {
             local bios_vendor="American Megatrends Inc."
             local bios_ver="$(( RANDOM % 5 + 1 )).$(( RANDOM % 30 ))"
             local bios_date="$(( RANDOM % 12 + 1 ))/$(( RANDOM % 28 + 1 ))/$(( RANDOM % 4 + 2021 ))"
-            local board_mfr="ASUSTeK COMPUTER INC."
-            local board_prod="PRIME B550M-A"
+            local board_mfr="${s_mfr:-ASUSTeK COMPUTER INC.}"
+            local board_prod="${s_prod:-PRIME B550M-A}"
             local board_serial=$(rand_serial 12)
+            local chassis_mfr="${s_mfr:-Default string}"
             local chassis_serial=$(rand_serial 12)
-            local all_args="-smbios type=0,vendor=${bios_vendor},version=${bios_ver},date=${bios_date}"
-            all_args="${all_args} -smbios type=2,manufacturer=${board_mfr},product=${board_prod},serial=${board_serial}"
-            all_args="${all_args} -smbios type=3,manufacturer=Default string,serial=${chassis_serial}"
+            local chassis_sku="${s_sku:-Default string}"
+            local all_args="-smbios \"type=0,vendor=${bios_vendor},version=${bios_ver},date=${bios_date}\""
+            all_args="${all_args} -smbios \"type=2,manufacturer=${board_mfr},product=${board_prod},serial=${board_serial}\""
+            all_args="${all_args} -smbios \"type=3,manufacturer=${chassis_mfr},serial=${chassis_serial},sku=${chassis_sku}\""
             conf_set "$vmid" "args" "${clean_args} ${all_args}"
             print_ok "All SMBIOS types set with realistic values"
             ;;
@@ -666,9 +678,9 @@ randomize_all() {
     local bios_date="$(( RANDOM % 12 + 1 ))/$(( RANDOM % 28 + 1 ))/$(( RANDOM % 4 + 2021 ))"
     local board_serial=$(rand_serial 12)
     local chassis_serial=$(rand_serial 12)
-    local all_args="-smbios type=0,vendor=American Megatrends Inc.,version=${bios_ver},date=${bios_date}"
-    all_args="${all_args} -smbios type=2,manufacturer=${mfr},product=${prod},serial=${board_serial}"
-    all_args="${all_args} -smbios type=3,manufacturer=Default string,serial=${chassis_serial}"
+    local all_args="-smbios \"type=0,vendor=American Megatrends Inc.,version=${bios_ver},date=${bios_date}\""
+    all_args="${all_args} -smbios \"type=2,manufacturer=${mfr},product=${prod},serial=${board_serial}\""
+    all_args="${all_args} -smbios \"type=3,manufacturer=${mfr},serial=${chassis_serial},sku=${sku}\""
     conf_set "$vmid" "args" "$all_args"
     print_ok "QEMU args set"
 
