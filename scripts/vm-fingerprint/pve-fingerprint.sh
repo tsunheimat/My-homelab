@@ -16,6 +16,10 @@ PVE_CONF_DIR="/etc/pve/qemu-server"
 BACKUP_DIR="/root/vm-fingerprint-backups"
 LOG_FILE="/root/vm-fingerprint.log"
 
+# CPU args for anti-detection / hypervisor hiding
+# Edit this variable to customize the CPU flags applied to VMs
+CPU_ARGS="-cpu 'host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,+kvm_pv_unhalt,+kvm_pv_eoi,hv_vendor_id=wormlandlady,kvm=off',-hypervisor"
+
 # Colors
 RED='\033[0;91m'
 GREEN='\033[0;92m'
@@ -62,10 +66,16 @@ rand_hex() {
 }
 
 # Generate random MAC (locally administered, unicast)
+# Format: XX:XX:XX:XX:XX:XX (colon-separated, uppercase)
 rand_mac() {
-    local first_octet=$(printf '%02X' $(( (RANDOM % 64) * 4 + 2 )))
-    local rest=$(rand_hex 10 | sed 's/\(..\)/:\1/g' | tr '[:lower:]' '[:upper:]')
-    echo "${first_octet}${rest}"
+    # First octet: bit 1 = 1 (locally administered), bit 0 = 0 (unicast)
+    local first=$(printf '%02X' $(( (RANDOM % 64) * 4 + 2 )))
+    local o2=$(printf '%02X' $(( RANDOM % 256 )))
+    local o3=$(printf '%02X' $(( RANDOM % 256 )))
+    local o4=$(printf '%02X' $(( RANDOM % 256 )))
+    local o5=$(printf '%02X' $(( RANDOM % 256 )))
+    local o6=$(printf '%02X' $(( RANDOM % 256 )))
+    echo "${first}:${o2}:${o3}:${o4}:${o5}:${o6}"
 }
 
 # Generate random UUID
@@ -147,15 +157,27 @@ smbios_get_field() {
 
 # Build smbios1 line from associative values
 build_smbios1() {
-    local uuid=$1 manufacturer=$2 product=$3 version=$4 serial=$5 sku=$6 family=$7
+    local uuid=$1 manufacturer=$2 product=$3 version=$4 serial=$5 sku=$6 family=$7 base64_opt=${8:-1}
     local parts=()
     [[ -n "$uuid" ]]         && parts+=("uuid=${uuid}")
-    [[ -n "$manufacturer" ]] && parts+=("manufacturer=${manufacturer}")
-    [[ -n "$product" ]]      && parts+=("product=${product}")
-    [[ -n "$version" ]]      && parts+=("version=${version}")
-    [[ -n "$serial" ]]       && parts+=("serial=${serial}")
-    [[ -n "$sku" ]]          && parts+=("sku=${sku}")
-    [[ -n "$family" ]]       && parts+=("family=${family}")
+    
+    if [[ "$base64_opt" == "1" ]]; then
+        [[ -n "$manufacturer" ]] && parts+=("manufacturer=$(echo -n "$manufacturer" | base64 | tr -d '\n')")
+        [[ -n "$product" ]]      && parts+=("product=$(echo -n "$product" | base64 | tr -d '\n')")
+        [[ -n "$version" ]]      && parts+=("version=$(echo -n "$version" | base64 | tr -d '\n')")
+        [[ -n "$serial" ]]       && parts+=("serial=$(echo -n "$serial" | base64 | tr -d '\n')")
+        [[ -n "$sku" ]]          && parts+=("sku=$(echo -n "$sku" | base64 | tr -d '\n')")
+        [[ -n "$family" ]]       && parts+=("family=$(echo -n "$family" | base64 | tr -d '\n')")
+        # Ensure we indicate base64 is in use
+        parts+=("base64=1")
+    else
+        [[ -n "$manufacturer" ]] && parts+=("manufacturer=${manufacturer}")
+        [[ -n "$product" ]]      && parts+=("product=${product}")
+        [[ -n "$version" ]]      && parts+=("version=${version}")
+        [[ -n "$serial" ]]       && parts+=("serial=${serial}")
+        [[ -n "$sku" ]]          && parts+=("sku=${sku}")
+        [[ -n "$family" ]]       && parts+=("family=${family}")
+    fi
     local IFS=','
     echo "${parts[*]}"
 }
@@ -278,6 +300,13 @@ view_fingerprint() {
     echo -e "  ${YELLOW}  Machine:        ${WHITE}${machine:-(default)}${RESET}"
     echo -e "  ${YELLOW}  BIOS:           ${WHITE}${bios:-(default/seabios)}${RESET}"
     [[ -n "$args" ]] && echo -e "  ${YELLOW}  QEMU Args:      ${WHITE}${args}${RESET}"
+
+    # Check if CPU anti-detection args are present
+    if echo "$args" | grep -q "\-cpu"; then
+        echo -e "  ${YELLOW}  CPU Args:       ${GREEN}ENABLED${RESET}"
+    else
+        echo -e "  ${YELLOW}  CPU Args:       ${RED}NOT SET${RESET} ${GRAY}(use menu to apply)${RESET}"
+    fi
 
     echo ""
 }
@@ -544,6 +573,7 @@ edit_qemu_args() {
     echo -e "    ${CYAN}[3]${RESET} Add SMBIOS Type 3 (Chassis info)"
     echo -e "    ${CYAN}[4]${RESET} Add ALL SMBIOS types (realistic preset)"
     echo -e "    ${CYAN}[5]${RESET} Set custom args"
+    echo -e "    ${CYAN}[6]${RESET} Add/Remove CPU anti-detection args"
     echo -e "    ${RED}[D]${RESET} Clear all args"
     echo -e "    ${GRAY}[0]${RESET} Back"
     echo ""
@@ -602,6 +632,23 @@ edit_qemu_args() {
             read -rp "  Enter custom args: " custom
             conf_set "$vmid" "args" "$custom"
             print_ok "Args set"
+            ;;
+        6)
+            if echo "$current_args" | grep -q "\-cpu"; then
+                # Remove CPU args
+                local no_cpu_args=$(echo "$current_args" | sed "s|-cpu [^-]*||g" | xargs)
+                if [[ -z "$no_cpu_args" ]]; then
+                    conf_del "$vmid" "args"
+                else
+                    conf_set "$vmid" "args" "$no_cpu_args"
+                fi
+                print_ok "CPU anti-detection args REMOVED"
+            else
+                # Add CPU args
+                conf_set "$vmid" "args" "${current_args} ${CPU_ARGS}"
+                print_ok "CPU anti-detection args APPLIED"
+                echo -e "  ${GRAY}  ${CPU_ARGS}${RESET}"
+            fi
             ;;
         D|d)
             conf_del "$vmid" "args"
@@ -681,8 +728,10 @@ randomize_all() {
     local all_args="-smbios \"type=0,vendor=American Megatrends Inc.,version=${bios_ver},date=${bios_date}\""
     all_args="${all_args} -smbios \"type=2,manufacturer=${mfr},product=${prod},serial=${board_serial}\""
     all_args="${all_args} -smbios \"type=3,manufacturer=${mfr},serial=${chassis_serial},sku=${sku}\""
+    # Append CPU anti-detection args
+    all_args="${all_args} ${CPU_ARGS}"
     conf_set "$vmid" "args" "$all_args"
-    print_ok "QEMU args set"
+    print_ok "QEMU args set (including CPU anti-detection)"
 
     echo ""
     print_ok "All fingerprints randomized for VM ${vmid}!"
@@ -749,6 +798,7 @@ vm_menu() {
         echo -e "    ${YELLOW}[3]${RESET}  Edit MAC Address"
         echo -e "    ${YELLOW}[4]${RESET}  Edit Disk Serial Number"
         echo -e "    ${YELLOW}[5]${RESET}  Edit QEMU Args (BIOS/Board/Chassis)"
+        echo -e "    ${YELLOW}[6]${RESET}  Toggle CPU Anti-Detection Args"
         echo ""
         echo -e "    ${RED}[R]${RESET}  Randomize ALL Fingerprints"
         echo -e "    ${GREEN}[B]${RESET}  Backup Config"
@@ -764,6 +814,23 @@ vm_menu() {
             3) edit_mac "$vmid"; echo ""; read -rp "  Press Enter..." ;;
             4) edit_disk_serial "$vmid"; echo ""; read -rp "  Press Enter..." ;;
             5) edit_qemu_args "$vmid"; echo ""; read -rp "  Press Enter..." ;;
+            6)
+                local cur_args=$(conf_get "$vmid" "args")
+                if echo "$cur_args" | grep -q "\-cpu"; then
+                    local no_cpu=$(echo "$cur_args" | sed "s|-cpu [^-]*||g" | xargs)
+                    if [[ -z "$no_cpu" ]]; then
+                        conf_del "$vmid" "args"
+                    else
+                        conf_set "$vmid" "args" "$no_cpu"
+                    fi
+                    print_ok "CPU anti-detection args REMOVED"
+                else
+                    conf_set "$vmid" "args" "${cur_args} ${CPU_ARGS}"
+                    print_ok "CPU anti-detection args APPLIED"
+                    echo -e "  ${GRAY}  ${CPU_ARGS}${RESET}"
+                fi
+                echo ""; read -rp "  Press Enter..."
+                ;;
             R|r) randomize_all "$vmid"; echo ""; read -rp "  Press Enter..." ;;
             B|b) backup_conf "$vmid"; echo ""; read -rp "  Press Enter..." ;;
             0) return ;;
