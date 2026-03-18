@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>隋煬帝功績簡報與文稿</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Use Noto Serif TC for elegant traditional Chinese headings and Noto Sans TC for readable body text -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&family=Noto+Sans+TC:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <style>
+        /* 1. THE SETUP */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #d1c8ba;
+            /* Darker paper background for the outer area */
+            display: grid;
+            gap: 20px;
+            grid-template-columns: 1fr;
+            margin: 0;
+            min-height: 100vh;
+            padding: 20px 0;
+            place-items: center;
+        }
+
+        .slide-container {
+            align-items: center;
+            background-color: #f7f3ea;
+            /* Light rice paper background for the slide */
+            border-radius: 8px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            font-family: 'Noto Sans TC', sans-serif;
+            height: 720px;
+            justify-content: center;
+            overflow: hidden;
+            padding: 50px;
+            position: relative;
+            width: 1280px;
+            color: #33251e;
+            /* Dark brown ink color for text */
+        }
+
+        /* Subtle background texture effect */
+        .slide-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: radial-gradient(#d5cbb9 1px, transparent 1px);
+            background-size: 20px 20px;
+            opacity: 0.2;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .slide-container>* {
+            position: relative;
+            z-index: 1;
+        }
+
+        p {
+            margin: 0;
+            margin-bottom: 15px;
+        }
+
+        /* 2. CONSISTENT TYPOGRAPHY */
+        .slide-container h1,
+        .slide-container h2,
+        .slide-container h3 {
+            color: #7e191b;
+            /* Traditional Lacquer Red */
+            font-weight: 700;
+            font-family: 'Noto Serif TC', serif;
+            margin: 0;
+            letter-spacing: 1px;
+        }
+
+        .slide-container p,
+        .slide-container li,
+        .slide-container .subtitle,
+        .slide-container .number-label,
+        .slide-container .alternating-text-tile p,
+        .slide-container .bleed-text-side p {
+            color: #33251e;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+
+        .slide-container h1 {
+            font-size: 70px;
+        }
+
+        .slide-container .slide-title {
+            font-size: 42px;
+            font-weight: 700;
+            margin-bottom: 35px;
+            text-align: left;
+            width: 100%;
+            border-bottom: 2px solid #ad8a4e;
+            /* Antique gold underline */
+            padding-bottom: 10px;
+        }
+
+        .slide-container h3 {
+            font-size: 30px;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .slide-container p,
+        .slide-container li,
+        .slide-container .subtitle {
+            font-size: 20px;
+            line-height: 1.6;
+        }
+
+        .slide-container .subtitle {
+            font-weight: 500;
+            margin: 20px auto;
+            color: #553e32;
+        }
+
+        .slide-container .content-area {
+            align-items: center;
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+            justify-content: center;
+            width: 100%;
+        }
+
+        /* 3. LAYOUT DEFINITIONS */
+
+        /* Title Layout */
+        .title-layout {
+            background-color: #f0e9d8;
+            border: 2px solid #ad8a4e;
+            border-radius: 12px;
+            padding: 60px;
+            text-align: center;
+            width: 80%;
+            position: relative;
+        }
+
+        .title-layout::before,
+        .title-layout::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            height: 1px;
+            background-color: #ad8a4e;
+        }
+
+        .title-layout::before {
+            top: 20px;
+        }
+
+        .title-layout::after {
+            bottom: 20px;
+        }
+
+        /* Section Title Layout */
+        .section-title-layout {
+            align-items: center;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            justify-content: center;
+            text-align: center;
+            width: 100%;
+        }
+
+        .section-title-layout h2 {
+            font-size: 65px;
+            margin-bottom: 20px;
+        }
+
+        .section-title-layout p {
+            font-size: 26px;
+            margin: 0 auto;
+            max-width: 800px;
+            color: #553e32;
+        }
+
+        .section-title-layout hr {
+            background-color: #7e191b;
+            border: none;
+            height: 4px;
+            margin: 30px auto;
+            width: 120px;
+        }
+
+        /* Two Column / Tiled Text */
+        .two-column {
+            align-items: flex-start;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 50px;
+            width: 100%;
+        }
+
+        .two-column.tiled {
+            align-items: stretch;
+        }
+
+        .two-column.tiled>div {
+            background-color: #f0e9d8;
+            border-radius: 12px;
+            border: 1px solid #d5cbb9;
+            padding: 40px;
+            text-align: left;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .two-column.tiled h3 {
+            color: #7e191b;
+            border-bottom: 1px solid #ad8a4e;
+            padding-bottom: 10px;
+        }
+
+        .two-column ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .two-column li {
+            margin-bottom: 18px;
+            padding-left: 30px;
+            position: relative;
+        }
+
+        .two-column li::before {
+            content: '■';
+            color: #ad8a4e;
+            position: absolute;
+            left: 0;
+            font-size: 14px;
+            top: 6px;
+        }
+
+        /* Images */
+        .image-wrapper {
+            border-radius: 8px;
+            height: 450px;
+            max-width: 100%;
+            overflow: hidden;
+            width: 100%;
+            border: 2px solid #ad8a4e;
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .image-wrapper img {
+            height: 100%;
+            max-width: 100%;
+            object-fit: cover;
+            width: 100%;
+        }
+
+        .two-column .image-wrapper img {
+            object-fit: contain;
+            background-color: #ebdabe;
+        }
+
+        /* Tiled Icons */
+        .tiled-content {
+            align-items: stretch;
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .tile {
+            align-items: center;
+            background-color: #f0e9d8;
+            border-radius: 12px;
+            border: 1px solid #d5cbb9;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            justify-content: flex-start;
+            padding: 35px 25px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .tile .icon {
+            color: #ad8a4e;
+            font-size: 50px;
+            margin-bottom: 25px;
+        }
+
+        .tile h3 {
+            color: #7e191b;
+            font-size: 26px;
+        }
+
+        .tile p {
+            font-size: 18px;
+            text-align: left;
+        }
+
+        /* Highlight Numbers */
+        .highlight-numbers-layout {
+            align-items: center;
+        }
+
+        .highlight-numbers-layout>div:first-child {
+            flex: 0 0 40%;
+            text-align: center;
+            background-color: #7e191b;
+            padding: 40px;
+            border-radius: 12px;
+            color: #f7f3ea;
+        }
+
+        .highlight-numbers-layout .number {
+            color: #ad8a4e;
+            font-size: 120px;
+            font-weight: 700;
+            font-family: 'Noto Serif TC', serif;
+            line-height: 1;
+            margin-bottom: 10px;
+        }
+
+        .highlight-numbers-layout .number-label {
+            font-size: 26px;
+            font-weight: 500;
+            color: #f7f3ea;
+        }
+
+        /* Bleed Image Right */
+        .slide-container.bleed-image-layout {
+            align-items: start;
+            display: grid;
+            gap: 50px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            padding: 0;
+            background-color: #f7f3ea;
+        }
+
+        .slide-container.bleed-image-layout>.content-container {
+            padding: 60px 0 60px 60px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .slide-container.bleed-image-layout>.image-container {
+            height: 100%;
+            overflow: hidden;
+            width: 100%;
+        }
+
+        .slide-container.bleed-image-layout img.bleed-image-side {
+            border-radius: 0 8px 8px 0;
+            display: block;
+            height: 720px;
+            object-fit: cover;
+            object-position: center;
+            width: 100%;
+        }
+
+        .slide-container.bleed-image-layout .bleed-text-side {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            flex-grow: 1;
+        }
+
+        .slide-container.bleed-image-layout .bleed-text-side p {
+            color: #33251e;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .slide-container.bleed-image-layout ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .slide-container.bleed-image-layout li {
+            margin-bottom: 15px;
+            padding-left: 25px;
+            position: relative;
+            font-size: 20px;
+        }
+
+        .slide-container.bleed-image-layout li::before {
+            content: '◆';
+            color: #7e191b;
+            position: absolute;
+            left: 0;
+            font-size: 16px;
+            top: 4px;
+        }
+
+        /* Q&A Layout */
+        .qa-layout {
+            margin: 0 auto;
+            text-align: center;
+            width: 100%;
+            align-self: center;
+        }
+
+        .qa-layout h2 {
+            font-size: 70px;
+            margin-bottom: 20px;
+        }
+
+        .qa-layout p {
+            font-size: 26px;
+            color: #553e32;
+        }
+
+        .qa-layout .contact-info {
+            color: #7e191b;
+            font-size: 24px;
+            margin-top: 50px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Slide 1: Title_Slide -->
+    <div class="slide-container" id="slide1">
+        <div class="title-layout">
+            <h1>隋煬帝歷史功績<br>之學術重探</h1>
+            <p class="subtitle">地緣政治重塑與大一統文化融合的深層政治戰略分析</p>
+        </div>
+    </div>
+
+    <!-- Slide 2: Image_Right_Text_Left (Paradigm Shift) -->
+    <div class="slide-container" id="slide2">
+        <h2 class="slide-title">導言：歷史評價的典範轉移</h2>
+        <div class="content-area">
+            <div class="two-column">
+                <div>
+                    <ul>
+                        <li>長期以來，隋煬帝在道德史觀下被極度符號化，塑造成集荒淫、昏庸於一身的亡國之君。</li>
+                        <li>現代學術界經歷了深刻的典範轉移，跳脫單純的道德批判，轉以歷史唯物主義、地緣政治學及社會學視角重新審視。</li>
+                        <li>他與歷史上缺乏抱負的「無愁天子」有本質區別。隋煬帝是一位具備強烈歷史使命感、極具雄才大略的「有為之主」。</li>
+                        <li>年號定為「大業」，展現其試圖在極短時間內建立超越秦皇漢武「聖天之業」的核心政治動機。</li>
+                    </ul>
+                </div>
+                <div>
+                    <div class="image-wrapper">
+                        <!-- Retrieved image of Emperor Yang -->
+                        <img src="http://googleusercontent.com/image_collection/image_retrieval/3136417897978349700"
+                            alt="隋煬帝歷史畫像">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 3: Section_Title (First Major Merit) -->
+    <div class="slide-container" id="slide3">
+        <div class="section-title-layout">
+            <hr>
+            <h2>第一大歷史功績</h2>
+            <p>地緣政治的重塑與國家基礎設施的奠基</p>
+            <hr>
+        </div>
+    </div>
+
+    <!-- Slide 4: Two_Column_Tiled_Text (Internal Integration) -->
+    <div class="slide-container" id="slide4">
+        <h2 class="slide-title">內部整合：營建東都與大運河</h2>
+        <div class="content-area">
+            <div class="two-column tiled">
+                <div>
+                    <h3>營建東都洛陽</h3>
+                    <p>順應經濟重心南移的戰略選擇：</p>
+                    <ul>
+                        <li><strong>經濟邏輯：</strong>江南農業高度發展，長安偏居西北，物資漕運艱難且成本極高。</li>
+                        <li><strong>地理優勢：</strong>洛陽居天下之中，交通輻輳，便於向全國輻射權力。</li>
+                        <li><strong>政治目標：</strong>就近威懾山東舊族與江左士族，確保東南財賦能順暢支援北方的軍事行動。</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>開鑿南北大運河</h3>
+                    <p>貫通五大水系，全長五千餘里的戰略動脈：</p>
+                    <ul>
+                        <li><strong>軍事物流：</strong>作為征伐高麗與維護北方邊疆安全的強大後勤命脈。</li>
+                        <li><strong>經濟整合：</strong>徹底打破南北方長達數百年的地理屏障，將江南糧食安全轉運至北方。</li>
+                        <li><strong>深遠影響：</strong>消除地方割據的地緣基礎，實質奠定後世唐宋繁榮的經濟交流黃金水道。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 5: Bleed_Image_Right (External Expansion) -->
+    <div class="slide-container bleed-image-layout" id="slide5">
+        <div class="content-container">
+            <h2 class="slide-title" style="margin-bottom: 20px;">外部開拓：<br>巡狩四方與重開絲路</h2>
+            <div class="content-area">
+                <div class="bleed-text-side">
+                    <p>在傳統觀念中被視為勞民傷財的「巡狩」，本質上是高強度的「政治軍事威懾戰略」。</p>
+                    <ul>
+                        <li><strong>威懾突厥：</strong>親率大軍巡幸漠北，徵調百萬男丁修築長城，鞏固北方物理防線。</li>
+                        <li><strong>以夷制夷：</strong>利用外交分化策略擊敗吐谷渾，設立西域四郡，將廣袤領土納入版圖。</li>
+                        <li><strong>重開絲路：</strong>大業五年，親率大軍西巡至張掖，西域二十七國國王與使臣齊聚拜迎。</li>
+                        <li><strong>歷史意義：</strong>打破魏晉以來阻絕局面，保障東西貿易通道安全，具長遠地緣政治影響。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="image-container">
+            <!-- Retrieved image of Silk Road caravan -->
+            <img class="bleed-image-side"
+                src="http://googleusercontent.com/image_collection/image_retrieval/7030175807032122822" alt="古代絲綢之路商隊圖">
+        </div>
+    </div>
+
+    <!-- Slide 6: Section_Title (Second Major Merit) -->
+    <div class="slide-container" id="slide6">
+        <div class="section-title-layout">
+            <hr>
+            <h2>第二大歷史功績</h2>
+            <p>大一統文化認同的建構與文官制度的創立</p>
+            <hr>
+        </div>
+    </div>
+
+    <!-- Slide 7: Tiled_Text_With_Icons (Cultural Unification) -->
+    <div class="slide-container" id="slide7">
+        <h2 class="slide-title">跨越地域的文化融合與政治整合</h2>
+        <div class="content-area">
+            <div class="tiled-content">
+                <div class="tile">
+                    <div class="icon"><i class="fa-solid fa-scroll"></i></div>
+                    <h3>保護圖籍與文化</h3>
+                    <p>嚴令保護南朝陳的全部圖籍，贏得南方知識份子讚譽，化解江左士族對北方政權的敵意與抵制。</p>
+                </div>
+                <div class="tile">
+                    <div class="icon"><i class="fa-solid fa-yin-yang"></i></div>
+                    <h3>宗教外交安撫</h3>
+                    <p>尊崇江南篤信的佛教天台宗與道教，親自向智顗大師受戒，以此做為心理安撫與社會整合的工具。</p>
+                </div>
+                <div class="tile">
+                    <div class="icon"><i class="fa-solid fa-users"></i></div>
+                    <h3>政治核心去排他性</h3>
+                    <p>打破關隴軍事貴族對權力的絕對壟斷，重用南方士人，並推動國家禮儀制度「南學化」的合流。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 8: Highlighted_Numbers (Institutional Innovation) -->
+    <div class="slide-container" id="slide8">
+        <h2 class="slide-title">制度創新：創立科舉與文學交融</h2>
+        <div class="content-area">
+            <div class="two-column highlight-numbers-layout">
+                <div>
+                    <div class="number">1300<span style="font-size: 60px;">+</span></div>
+                    <div class="number-label">年文官體制之基石</div>
+                </div>
+                <div>
+                    <h3>瓦解門閥政治的社會基礎</h3>
+                    <p>隋煬帝在制度層面最深遠的貢獻，在於正式創置「科舉制度」。</p>
+                    <p>此舉廢除了自魏晉以來的「九品中正制」，將官吏的選拔權從地方士族手中徹底收歸中央。</p>
+                    <p>建立基於才學而非血緣的「官僚能力主義」體系，為平民子弟打開向上流動通道。同時，他親自推動南北詩風融合，為初盛唐詩歌輝煌做出不可磨滅的鋪墊。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 9: Image_Right_Text_Left (The Dialectic of Merit and Tyranny) -->
+    <div class="slide-container" id="slide9">
+        <h2 class="slide-title">功業與暴政的辯證：「急政」的代價</h2>
+        <div class="content-area">
+            <div class="two-column">
+                <div>
+                    <p><strong>極端的自負與好大喜功：</strong><br>將千秋萬代的大事業壓縮在十餘年內同時上馬，完全無視社會實際承受力與小農經濟的脆弱性。</p>
+                    <p><strong>生存權的無情剝奪：</strong><br>營建洛陽、開運河、三征高麗等龐大勞役，導致數千萬青壯年脫離農業生產，引發「耕稼失時」與大規模非正常死亡。</p>
+                    <p><strong>仁與暴的一念之差：</strong><br>大禹治水為救民，隋煬帝興役卻為個人不世之功。「急功近利」的過度榨取，徹底踐踏了百姓基本生存權，終致國家覆滅身死江都。</p>
+                </div>
+                <div>
+                    <div class="image-wrapper">
+                        <!-- Retrieved image of Grand Canal construction laborers -->
+                        <img src="http://googleusercontent.com/image_collection/image_retrieval/9222231221591517217"
+                            alt="古代勞工開鑿運河歷史插畫">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 10: Q&A (Conclusion & Discussion) -->
+    <div class="slide-container" id="slide10">
+        <div class="qa-layout">
+            <h2>歷史啟示與討論</h2>
+            <p>唐太宗汲取「水能載舟，亦能覆舟」的教訓，<br>而大唐的繁榮實則承襲了隋煬帝的地緣與制度遺產。</p>
+            <div class="contact-info">
+                開放式問題：<br>我們應當如何客觀評價其「罪在當代，功在千秋」的歷史矛盾？
+            </div>
+        </div>
+    </div>
+
+</body>
+
+</html>
