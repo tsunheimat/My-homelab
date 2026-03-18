@@ -96,6 +96,11 @@ listeners:
     port: 23713
     type: mixed
     proxy: "vps-us3"
+  #sagit
+  - name: "sagit-us1"
+    port: 23811
+    type: mixed
+    proxy: "sagit-us1"
   # tw port: 24000-24999
   #ednovas
   - name: "ednovas-tw1"
@@ -609,6 +614,7 @@ proxy-groups:
   - { name: Roy, type: select, include-all: true, filter: "Roy" }
   - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
   - { name: Vps, type: select, include-all: true, filter: "Vps" }
+  - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
   - {
       name: ednovas-us1,
       type: select,
@@ -668,6 +674,12 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*Vps)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: sagit-us1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Sagit)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
   - {
       name: ednovas-hk1,
