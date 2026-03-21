@@ -119,10 +119,6 @@ listeners:
     port: 25711
     type: mixed
     proxy: "vps-sg1"
-  - name: "vps-sg1"
-    port: 25711
-    type: mixed
-    proxy: "vps-sg1"
   - name: "vps-sg2"
     port: 25712
     type: mixed
@@ -135,6 +131,19 @@ listeners:
     port: 25714
     type: mixed
     proxy: "vps-sg4"
+    # jp port: 26000-26999
+  - name: "roy-jp1"
+    port: 26711
+    type: mixed
+    proxy: "roy-jp1"
+  - name: "nonesun-jp1"
+    port: 26712
+    type: mixed
+    proxy: "nonesun-jp1"
+  - name: "jp-auto"
+    port: 26713
+    type: mixed
+    proxy: "♻️ 日本自动"
 
 # 全局配置
 mixed-port: 7890
@@ -758,6 +767,18 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*Vps)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: roy-jp1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Roy)(?=.*(🇯🇵|日本))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: nonesun-jp1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*Nonesun)(?=.*(🇯🇵|日本))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
     }
 # 规则匹配
 rules:
