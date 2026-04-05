@@ -93,7 +93,7 @@ foreach ($n in $array) {
 
     $Shortcut.TargetPath = $TargetPath
 
-    $Shortcut.Arguments = "--user-data-dir=`"$UserDataPath\$x`""
+    $Shortcut.Arguments = "--user-data-dir=`"$UserDataPath\$x`" --app-user-model-id=`"Chrome.Profile.$x`""
 
     $Shortcut.WorkingDirectory = $WorkingDirectory
 
