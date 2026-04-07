@@ -93,6 +93,46 @@ data "coder_parameter" "home_disk_size" {
   }
 }
 
+#nfs server ip
+data "coder_parameter" "nfs_server" {
+  name         = "nfs_server"
+  type         = "string"
+  display_name = "NFS Server IP"
+  description  = "The NFS server IP address to use for the workspace"
+  default = "10.0.100.240"
+}
+
+#nfs share path
+data "coder_parameter" "nfs_mount_path" {
+  name         = "nfs_mount_path"
+  type         = "string"
+  display_name = "NFS Mount Path"
+  description  = "The path in your workspace container to mount the NFS share to"
+  default      = "/srv/sharing/cd6/files/vibe-coding-share"
+  validation {
+    regex = "^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
+    error = "NFS mount path must be a valid path in your workspace container"
+  }
+}
+
+#codex setting
+
+data "coder_parameter" "codex_base_url" {
+  name         = "codex_base_url"
+  display_name = "Codex Base URL"
+  description  = "The custom base URL for the Codex OpenAI provider."
+  default      = "https://sub2api-hub.tsunhei.com"
+  type         = "string"
+  mutable      = true # Allows changing this value when updating the workspace
+}
+
+variable "openai_api_key" {
+  type        = string
+  description = "OpenAI API Key for Codex"
+  sensitive   = true # Hides the value from logs and CLI output
+}
+
+
 #k8s settings
 provider "kubernetes" {
   # Authenticate via ~/.kube/config or a Coder-specific ServiceAccount, depending on admin preferences
@@ -106,12 +146,13 @@ data "coder_workspace_owner" "me" {}
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
-  version        = "1.4.3"
+  version        = "1.5.0"
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
-  display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-  extensions = ["openai.chatgpt","kilocode.kilo-code"]
+  display_name  = "vscode-web"
+  extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
+  folder = "/home/coder/repos"
   
 }
 
@@ -124,7 +165,8 @@ module "code-server" {
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
-  folder = "/home/coder/coder-${data.coder_workspace.me.name}"
+  folder = "/home/coder/repos"
+  extensions = ["kilocode.kilo-code","eamodio.gitlens"]
 }
 
 #application: filebrowser
@@ -134,32 +176,56 @@ module "filebrowser" {
   version    = "1.1.4"
   agent_id   = coder_agent.main.id
   agent_name = "main"
-  folder   = "/home/coder/coder-${data.coder_workspace.me.name}"
+  folder   = "/home/coder/repos"
   subdomain  = false
 }
 
 
-## testing: mux
-module "mux" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/mux/coder"
-  version  = "1.4.3"
-  agent_id = coder_agent.main.id
-  subdomain  = false
-}
 
-
-#application: codex
 module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
+
   agent_id       = coder_agent.main.id
-  #openai_api_key = var.openai_api_key
-  workdir        = "/home/coder/project"
+  workdir        = "/home/coder/repos"
+  openai_api_key = var.openai_api_key
   continue = true
   enable_state_persistence = true
-}
+  
+  base_config_toml = <<-EOT
+    model_provider = "OpenAI"
+    model = "gpt-5.4"
+    review_model = "gpt-5.4"
+    model_reasoning_effort = "high"
+    disable_response_storage = true
+    network_access = "enabled"
+    windows_wsl_setup_acknowledged = true
+    model_context_window = 1000000
+    model_auto_compact_token_limit = 900000
+    approvals_reviewer = "user"
 
+    sandbox_mode = "danger-full-access"
+    approval_policy = "never"
+    preferred_auth_method = "apikey"
+
+    [model_providers.OpenAI]
+    name = "OpenAI"
+    base_url = "${data.coder_parameter.codex_base_url.value}"
+    wire_api = "responses"
+    supports_websockets = true
+    requires_openai_auth = true
+
+    [features]
+    responses_websockets_v2 = true
+
+    [projects."/home/coder/repos"]
+    trust_level = "trusted"
+
+    [notice]
+    hide_full_access_warning = true
+  EOT
+
+}
 
 #main resource
 resource "coder_agent" "main" {
@@ -290,7 +356,7 @@ resource "kubernetes_deployment" "main" {
       }
     }
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
     }
 
     template {
@@ -343,6 +409,12 @@ resource "kubernetes_deployment" "main" {
             name       = "home"
             read_only  = false
           }
+
+          # nfs mounting for repo only
+          volume_mount {
+            name       = "nfs-repos"
+            mount_path = "/home/coder/repos" # This is where your code lives
+          }
         }
 
         volume {
@@ -352,6 +424,18 @@ resource "kubernetes_deployment" "main" {
             read_only  = false
           }
         }
+
+        volume {
+          name = "nfs-repos"
+          nfs {
+            server = data.coder_parameter.nfs_server.value          # Your NFS server IP
+            path   = data.coder_parameter.nfs_mount_path.value     # Your NFS path
+            
+            # Optional: Add /${data.coder_workspace.me.owner} to the path 
+            # if you want individual isolated repo folders per user on the NFS.
+          }
+        }
+      
 
         affinity {
           // This affinity attempts to spread out all workspace pods evenly across
