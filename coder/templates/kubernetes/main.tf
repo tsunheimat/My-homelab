@@ -126,10 +126,12 @@ data "coder_parameter" "codex_base_url" {
   mutable      = true # Allows changing this value when updating the workspace
 }
 
-variable "openai_api_key" {
-  type        = string
-  description = "OpenAI API Key for Codex"
-  sensitive   = true # Hides the value from logs and CLI output
+data "coder_parameter" "openai_api_key" {
+  name         = "openai_api_key"
+  display_name = "OpenAI API Key"
+  description  = "OpenAI API Key for Codex"
+  type         = "string"
+  mutable      = true
 }
 
 
@@ -187,45 +189,46 @@ module "codex" {
   version        = "4.3.1"
 
   agent_id       = coder_agent.main.id
-  workdir        = "/home/coder/repos"
-  openai_api_key = var.openai_api_key
+  workdir        = "/home/coder"
+  openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
-  enable_state_persistence = true
+  enable_state_persistence = false
   
-  base_config_toml = <<-EOT
-    model_provider = "OpenAI"
-    model = "gpt-5.4"
-    review_model = "gpt-5.4"
-    model_reasoning_effort = "high"
-    disable_response_storage = true
-    network_access = "enabled"
-    windows_wsl_setup_acknowledged = true
-    model_context_window = 1000000
-    model_auto_compact_token_limit = 900000
-    approvals_reviewer = "user"
+base_config_toml = <<-EOT
+model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "high"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+approvals_reviewer = "user"
 
-    sandbox_mode = "danger-full-access"
-    approval_policy = "never"
-    preferred_auth_method = "apikey"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+preferred_auth_method = "apikey"
 
-    [model_providers.OpenAI]
-    name = "OpenAI"
-    base_url = "${data.coder_parameter.codex_base_url.value}"
-    wire_api = "responses"
-    supports_websockets = true
-    requires_openai_auth = true
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "${data.coder_parameter.codex_base_url.value}"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
 
-    [features]
-    responses_websockets_v2 = true
+[features]
+responses_websockets_v2 = true
 
-    [projects."/home/coder/repos"]
-    trust_level = "trusted"
+[projects."/home/coder/repos"]
+trust_level = "trusted"
 
-    [notice]
-    hide_full_access_warning = true
-  EOT
-
+[notice]
+hide_full_access_warning = true
+EOT
 }
+
+
 
 #main resource
 resource "coder_agent" "main" {
