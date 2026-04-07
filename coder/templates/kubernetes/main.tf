@@ -54,6 +54,10 @@ data "coder_parameter" "cpu" {
     name  = "8 Cores"
     value = "8"
   }
+  option {
+    name  = "16 Cores"
+    value = "16"
+  }
 }
 
 #k8s settings
@@ -76,6 +80,7 @@ data "coder_parameter" "memory" {
     name  = "8 GB"
     value = "8"
   }
+
 }
 
 #k8s settings
@@ -123,7 +128,7 @@ data "coder_parameter" "codex_base_url" {
   description  = "The custom base URL for the Codex OpenAI provider."
   default      = "https://sub2api-hub.tsunhei.com"
   type         = "string"
-  mutable      = true # Allows changing this value when updating the workspace
+  mutable      = true 
 }
 
 data "coder_parameter" "openai_api_key" {
@@ -155,6 +160,7 @@ module "vscode-web" {
   display_name  = "vscode-web"
   extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
   folder = "/home/coder/repos"
+  use_cached = true
   
 }
 
@@ -169,6 +175,8 @@ module "code-server" {
   open_in = "tab"
   folder = "/home/coder/repos"
   extensions = ["kilocode.kilo-code","eamodio.gitlens"]
+  use_cached = true
+  use_cached_extensions = true
 }
 
 #application: filebrowser
@@ -187,14 +195,14 @@ module "filebrowser" {
 module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
-
   agent_id       = coder_agent.main.id
-  workdir        = "/home/coder"
+  workdir        = "/home/coder/repos"
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
+
   enable_state_persistence = false
   
-base_config_toml = <<-EOT
+base_config_toml = replace(<<-EOT
 model_provider = "OpenAI"
 model = "gpt-5.4"
 review_model = "gpt-5.4"
@@ -223,11 +231,27 @@ responses_websockets_v2 = true
 [projects."/home/coder/repos"]
 trust_level = "trusted"
 
+[projects."/home/coder"]
+trust_level = "trusted"
+
 [notice]
 hide_full_access_warning = true
 EOT
+  , "\r", "") # This tells Terraform to replace all carriage returns with nothing
 }
 
+
+module "git-config" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/modules/git-config/coder"
+  version  = "1.0.33" # Use the latest version
+  
+  agent_id = coder_agent.main.id 
+  
+  # Disabling these hides the UI prompts and forces automatic configuration
+  allow_username_change = false
+  allow_email_change    = false
+}
 
 
 #main resource
