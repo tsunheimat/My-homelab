@@ -111,12 +111,12 @@ module "vscode-web" {
   subdomain      = false
   accept_license = true
   display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-  extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
+  extensions = ["openai.chatgpt","kilocode.kilo-code"]
   
 }
 
-#application: vscode2
-module "vscode-web2" {
+#application: code-server
+module "code-server" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
@@ -138,14 +138,28 @@ module "filebrowser" {
   subdomain  = false
 }
 
-#application: opencode
-module "opencode" {
-  source   = "registry.coder.com/coder-labs/opencode/coder"
-  version  = "0.1.1"
+
+## testing: mux
+module "mux" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/mux/coder"
+  version  = "1.4.3"
   agent_id = coder_agent.main.id
-  workdir  = "/home/coder/project"
   subdomain  = false
 }
+
+
+#application: codex
+module "codex" {
+  source         = "registry.coder.com/coder-labs/codex/coder"
+  version        = "4.3.1"
+  agent_id       = coder_agent.main.id
+  #openai_api_key = var.openai_api_key
+  workdir        = "/home/coder/project"
+  continue = true
+  enable_state_persistence = true
+}
+
 
 #main resource
 resource "coder_agent" "main" {
