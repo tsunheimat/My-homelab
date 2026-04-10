@@ -133,27 +133,31 @@ data "coder_parameter" "memory_mb" {
   mutable      = true
 }
 
+data "coder_parameter" "disk_size_gb" {
+  name         = "disk_size_gb"
+  display_name = "Disk Size (GB)"
+  type         = "number"
+  default      = 30
+  mutable      = true
+  validation {
+    min       = 10
+    max       = 100
+    monotonic = "increasing"
+  }
+}
+
 # pve setting (to be set)
 data "coder_parameter" "clone_vm_vmid" {
   name         = "clone_vm_vmid"
   display_name = "Clone VMID"
   type         = "number"
   mutable      = true
+  default         = 9511
   validation {
     min       = 1
     max       = 100000
     monotonic = "increasing"
   }
-}
-
-
-# pve setting (to be set)
-data "coder_parameter" "memory_mb" {
-  name         = "memory_mb"
-  display_name = "Memory (MB)"
-  type         = "number"
-  default      = 4096
-  mutable      = true
 }
 
 #codex setting
@@ -252,7 +256,7 @@ resource "proxmox_virtual_environment_file" "cloud_init_user_data" {
 resource "proxmox_virtual_environment_vm" "workspace" {
   name      = local.vm_name
   node_name = var.proxmox_node
-  vmid      = data.coder_parameter.clone_vm_vmid.value
+  #vmid      = data.coder_parameter.clone_vm_vmid.value
 
   clone {
     node_name = var.proxmox_node
@@ -292,7 +296,7 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   }
 
   vga {
-    type = "serial0"
+    type = "std"
   }
 
   serial_device {
@@ -305,11 +309,7 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     size         = data.coder_parameter.disk_size_gb.value
   }
 
-  disk {
-    interface    = "scsi0"
-    datastore_id = var.disk_storage
-    size         = data.coder_parameter.disk_size_gb.value
-  }
+
 
   initialization {
     type         = "nocloud"
@@ -334,7 +334,7 @@ module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.5.0"
-  agent_id       = coder_agent.main.id
+  agent_id       = coder_agent.dev.id
   subdomain      = false
   accept_license = true
   display_name  = "vscode-web"
@@ -349,7 +349,7 @@ module "code-server" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
-  agent_id       = coder_agent.main.id
+  agent_id       = coder_agent.dev.id
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
@@ -364,7 +364,7 @@ module "filebrowser" {
   count      = data.coder_workspace.me.start_count
   source     = "registry.coder.com/coder/filebrowser/coder"
   version    = "1.1.4"
-  agent_id   = coder_agent.main.id
+  agent_id   = coder_agent.dev.id
   agent_name = "main"
   folder   = "/home/coder/repos"
   subdomain  = false
@@ -374,7 +374,7 @@ module "filebrowser" {
 module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
-  agent_id       = coder_agent.main.id
+  agent_id       = coder_agent.dev.id
   workdir        = "/home/coder/repos"
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
@@ -425,7 +425,7 @@ module "git-config" {
   source   = "registry.coder.com/modules/git-config/coder"
   version  = "1.0.33" # Use the latest version
   
-  agent_id = coder_agent.main.id 
+  agent_id = coder_agent.dev.id 
   
   # Disabling these hides the UI prompts and forces automatic configuration
   allow_username_change = false
