@@ -15,6 +15,7 @@ packages:
   - git
   - jq
   - qemu-guest-agent
+  - nfs-common
 
 write_files:
   - path: /opt/coder/init.sh
@@ -47,7 +48,13 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+mounts:
+  - [ "${nfs_target}", "${nfs_mount_point}", "nfs", "defaults,x-systemd.automount,noauto,x-systemd.requires=network-online.target", "0", "0" ]
+
 runcmd:
+  # create the mount point and assign ownership
+  - mkdir -p ${nfs_mount_point}
+  - chown -R ${linux_user}:${linux_user} ${nfs_mount_point}
   # --- Add these lines to enable Serial and VNC console output ---
   - sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200"/' /etc/default/grub
   - sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=tty1 console=ttyS0,115200"/' /etc/default/grub

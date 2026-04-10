@@ -110,11 +110,6 @@ variable "clone_template_vmid" {
   default = 9511
 }
 
-
-
-data "coder_workspace" "me" {}
-data "coder_workspace_owner" "me" {}
-
 # pve setting (to be set)
 data "coder_parameter" "cpu_cores" {
   name         = "cpu_cores"
@@ -160,6 +155,10 @@ data "coder_parameter" "clone_vm_vmid" {
   }
 }
 
+data "coder_workspace" "me" {}
+data "coder_workspace_owner" "me" {}
+
+
 #codex setting
 
 data "coder_parameter" "codex_base_url" {
@@ -177,6 +176,29 @@ data "coder_parameter" "openai_api_key" {
   description  = "OpenAI API Key for Codex"
   type         = "string"
   mutable      = true
+}
+
+
+#nfs server ip
+data "coder_parameter" "nfs_server" {
+  name         = "nfs_server"
+  type         = "string"
+  display_name = "NFS Server IP"
+  description  = "The NFS server IP address to use for the workspace"
+  default = "10.0.30.240"
+}
+
+#nfs share path
+data "coder_parameter" "nfs_mount_path" {
+  name         = "nfs_mount_path"
+  type         = "string"
+  display_name = "NFS Mount Path"
+  description  = "The path in your workspace container to mount the NFS share to"
+  default      = "/srv/sharing/cd6/files/vibe-coding-share"
+  validation {
+    regex = "^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
+    error = "NFS mount path must be a valid path in your workspace container"
+  }
 }
 
 
@@ -231,12 +253,16 @@ locals {
   snippet_filename = "${local.vm_name}.yml"
   base_user        = replace(replace(replace(lower(data.coder_workspace_owner.me.name), " ", "-"), "/", "-"), "@", "-")             # to avoid special characters in the username
   linux_user       = contains(["root", "admin", "daemon", "bin", "sys"], local.base_user) ? "${local.base_user}1" : local.base_user # to avoid conflict with system users
+  nfs_target      = "${data.coder_parameter.nfs_server.value}:${data.coder_parameter.nfs_mount_path.value}"
+  nfs_mount_point = "/home/${local.linux_user}/repo"
 
   rendered_user_data = templatefile("${path.module}/cloud-init/user-data.tftpl", {
     coder_token           = coder_agent.dev.token
     coder_init_script_b64 = base64encode(coder_agent.dev.init_script)
     hostname              = local.vm_name
     linux_user            = local.linux_user
+    nfs_target            = local.nfs_target
+    nfs_mount_point       = local.nfs_mount_point
   })
 }
 
@@ -339,7 +365,7 @@ module "vscode-web" {
   accept_license = true
   display_name  = "vscode-web"
   extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
-  folder = "/home/coder/repos"
+  folder = "/home/${local.linux_user}/repo
   use_cached = true
   
 }
@@ -353,7 +379,7 @@ module "code-server" {
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
-  folder = "/home/coder/repos"
+  folder = "/home/${local.linux_user}/repo
   extensions = ["kilocode.kilo-code","eamodio.gitlens"]
   use_cached = true
   use_cached_extensions = true
@@ -366,7 +392,7 @@ module "filebrowser" {
   version    = "1.1.4"
   agent_id   = coder_agent.dev.id
   agent_name = "main"
-  folder   = "/home/coder/repos"
+  folder   = "/home/${local.linux_user}/repo
   subdomain  = false
 }
 
@@ -375,7 +401,7 @@ module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
   agent_id       = coder_agent.dev.id
-  workdir        = "/home/coder/repos"
+  workdir        = "/home/${local.linux_user}/repo
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
 
@@ -407,11 +433,9 @@ requires_openai_auth = true
 [features]
 responses_websockets_v2 = true
 
-[projects."/home/coder/repos"]
+[projects."/home/${local.linux_user}/repo]
 trust_level = "trusted"
 
-[projects."/home/coder"]
-trust_level = "trusted"
 
 [notice]
 hide_full_access_warning = true
