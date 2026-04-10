@@ -120,7 +120,7 @@ data "coder_parameter" "cpu_cores" {
   name         = "cpu_cores"
   display_name = "CPU Cores"
   type         = "number"
-  default      = 4
+  default      = 8
   mutable      = true
 }
 
@@ -129,7 +129,7 @@ data "coder_parameter" "memory_mb" {
   name         = "memory_mb"
   display_name = "Memory (MB)"
   type         = "number"
-  default      = 4096
+  default      = 12288
   mutable      = true
 }
 
@@ -155,6 +155,26 @@ data "coder_parameter" "memory_mb" {
   default      = 4096
   mutable      = true
 }
+
+#codex setting
+
+data "coder_parameter" "codex_base_url" {
+  name         = "codex_base_url"
+  display_name = "Codex Base URL"
+  description  = "The custom base URL for the Codex OpenAI provider."
+  default      = "https://sub2api-hub.tsunhei.com"
+  type         = "string"
+  mutable      = true 
+}
+
+data "coder_parameter" "openai_api_key" {
+  name         = "openai_api_key"
+  display_name = "OpenAI API Key"
+  description  = "OpenAI API Key for Codex"
+  type         = "string"
+  mutable      = true
+}
+
 
 resource "coder_agent" "dev" {
   arch = "amd64"
@@ -309,30 +329,23 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
 }
 
-module "code-server" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/code-server/coder"
-  version        = "1.4.2"
-  agent_id = coder_agent.dev.id
-  additional_args = "--disable-workspace-trust"
-  extensions_dir = "/home/coder/.vscode-server/extensions"
-}
-
 #application: vscode
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
-  version        = "1.4.3"
+  version        = "1.5.0"
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
-  display_name  = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-  extensions = ["github.copilot-chat", "github.copilot","kilocode.kilo-code"]
+  display_name  = "vscode-web"
+  extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
+  folder = "/home/coder/repos"
+  use_cached = true
   
 }
 
-#application: vscode2
-module "vscode-web2" {
+#application: code-server
+module "code-server" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
@@ -340,7 +353,10 @@ module "vscode-web2" {
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
-  folder = "/home/coder/coder-${data.coder_workspace.me.name}"
+  folder = "/home/coder/repos"
+  extensions = ["kilocode.kilo-code","eamodio.gitlens"]
+  use_cached = true
+  use_cached_extensions = true
 }
 
 #application: filebrowser
@@ -350,6 +366,68 @@ module "filebrowser" {
   version    = "1.1.4"
   agent_id   = coder_agent.main.id
   agent_name = "main"
-  folder   = "/home/coder/coder-${data.coder_workspace.me.name}"
+  folder   = "/home/coder/repos"
   subdomain  = false
+}
+
+
+module "codex" {
+  source         = "registry.coder.com/coder-labs/codex/coder"
+  version        = "4.3.1"
+  agent_id       = coder_agent.main.id
+  workdir        = "/home/coder/repos"
+  openai_api_key = data.coder_parameter.openai_api_key.value
+  continue = true
+
+  enable_state_persistence = false
+  
+base_config_toml = replace(<<-EOT
+model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "high"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+approvals_reviewer = "user"
+
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+preferred_auth_method = "apikey"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "${data.coder_parameter.codex_base_url.value}"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
+
+[features]
+responses_websockets_v2 = true
+
+[projects."/home/coder/repos"]
+trust_level = "trusted"
+
+[projects."/home/coder"]
+trust_level = "trusted"
+
+[notice]
+hide_full_access_warning = true
+EOT
+  , "\r", "") # This tells Terraform to replace all carriage returns with nothing
+}
+
+
+module "git-config" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/modules/git-config/coder"
+  version  = "1.0.33" # Use the latest version
+  
+  agent_id = coder_agent.main.id 
+  
+  # Disabling these hides the UI prompts and forces automatic configuration
+  allow_username_change = false
+  allow_email_change    = false
 }
