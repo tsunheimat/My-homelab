@@ -151,7 +151,7 @@ data "coder_workspace_owner" "me" {}
 
 #application: vscode
 module "vscode-web" {
-  count          = data.coder_workspace.me.start_count
+  #count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.5.0"
   agent_id       = coder_agent.main.id
@@ -166,7 +166,7 @@ module "vscode-web" {
 
 #application: code-server
 module "code-server" {
-  count          = data.coder_workspace.me.start_count
+  #count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
   agent_id       = coder_agent.main.id
@@ -181,7 +181,7 @@ module "code-server" {
 
 #application: filebrowser
 module "filebrowser" {
-  count      = data.coder_workspace.me.start_count
+  #count      = data.coder_workspace.me.start_count
   source     = "registry.coder.com/coder/filebrowser/coder"
   version    = "1.1.4"
   agent_id   = coder_agent.main.id
@@ -242,7 +242,7 @@ EOT
 
 
 module "git-config" {
-  count    = data.coder_workspace.me.start_count
+  #count    = data.coder_workspace.me.start_count
   source   = "registry.coder.com/modules/git-config/coder"
   version  = "1.0.33" # Use the latest version
   
@@ -252,6 +252,7 @@ module "git-config" {
   allow_username_change = false
   allow_email_change    = false
 }
+
 
 
 #main resource
@@ -348,7 +349,7 @@ resource "kubernetes_persistent_volume_claim" "home" {
 
 #k8s deploy
 resource "kubernetes_deployment" "main" {
-  count = data.coder_workspace.me.start_count
+  #count = data.coder_workspace.me.start_count
   depends_on = [
     kubernetes_persistent_volume_claim.home
   ]
@@ -408,12 +409,8 @@ resource "kubernetes_deployment" "main" {
           name              = "dev"
           image             = "codercom/example-node:ubuntu"
           image_pull_policy = "Always"
-          command = ["sh", "-c",<<EOF
-            # Create user and setup home directory
-            mkdir -p /home/coder/coder-${data.coder_workspace.me.name} && \
-            ${coder_agent.main.init_script}
-            EOF
-          ]
+          command =  ["sh", "-c", coder_agent.main.init_script]
+
           security_context {
             run_as_user = "1000"
           }
