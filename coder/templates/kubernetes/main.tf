@@ -12,7 +12,7 @@ terraform {
 provider "coder" {
 }
 
-#k8s settings
+
 variable "use_kubeconfig" {
   type        = bool
   description = <<-EOF
@@ -149,9 +149,50 @@ provider "kubernetes" {
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+
+# 1. Define the multi-select parameter
+data "coder_parameter" "selected_apps" {
+  name         = "selected_apps"
+  display_name = "Workspace Applications"
+  description  = "Select which applications you want to include in this workspace."
+  type         = "list(string)"
+  
+  form_type = "multi-select"
+  # Set your default selections here (must be JSON encoded)
+  default      = jsonencode(["vscode-web", "filebrowser"]) 
+  mutable      = true # Allows users to add/remove apps later by editing the workspace
+  
+  option {
+    name  = "VS Code Web"
+    value = "vscode-web"
+    icon  = "/icon/code.svg"
+  }
+  option {
+    name  = "Code Server"
+    value = "code-server"
+    icon  = "/icon/code.svg"
+  }
+  option {
+    name  = "File Browser"
+    value = "filebrowser"
+    icon  = "/icon/folder.svg"
+  }
+  option {
+    name  = "Codex"
+    value = "codex"
+    icon  = "/icon/robot.svg" 
+  }
+}
+
+# 2. Extract the list into a local variable for easy reading
+locals {
+  apps_list = jsondecode(data.coder_parameter.selected_apps.value)
+}
+
+
 #application: vscode
 module "vscode-web" {
-  #count          = data.coder_workspace.me.start_count
+  count          = contains(local.apps_list, "vscode-web") ? data.coder_workspace.me.start_count : 0
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.5.0"
   agent_id       = coder_agent.main.id
@@ -166,7 +207,7 @@ module "vscode-web" {
 
 #application: code-server
 module "code-server" {
-  #count          = data.coder_workspace.me.start_count
+  count          = contains(local.apps_list, "code-server") ? data.coder_workspace.me.start_count : 0
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
   agent_id       = coder_agent.main.id
@@ -181,7 +222,7 @@ module "code-server" {
 
 #application: filebrowser
 module "filebrowser" {
-  #count      = data.coder_workspace.me.start_count
+  count      = contains(local.apps_list, "filebrowser") ? data.coder_workspace.me.start_count : 0
   source     = "registry.coder.com/coder/filebrowser/coder"
   version    = "1.1.4"
   agent_id   = coder_agent.main.id
@@ -191,8 +232,8 @@ module "filebrowser" {
 }
 
 
-
 module "codex" {
+  count          = contains(local.apps_list, "codex") ? data.coder_workspace.me.start_count : 0
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
   agent_id       = coder_agent.main.id
@@ -242,7 +283,7 @@ EOT
 
 
 module "git-config" {
-  #count    = data.coder_workspace.me.start_count
+  count    = data.coder_workspace.me.start_count
   source   = "registry.coder.com/modules/git-config/coder"
   version  = "1.0.33" # Use the latest version
   
@@ -346,7 +387,7 @@ resource "kubernetes_persistent_volume_claim" "home" {
 
 #k8s deploy
 resource "kubernetes_deployment" "main" {
-  #count = data.coder_workspace.me.start_count
+  count = data.coder_workspace.me.start_count
   depends_on = [
     kubernetes_persistent_volume_claim.home
   ]
