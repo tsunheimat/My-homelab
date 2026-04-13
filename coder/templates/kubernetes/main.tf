@@ -248,9 +248,6 @@ module "git-config" {
   
   agent_id = coder_agent.main.id 
   
-  # Disabling these hides the UI prompts and forces automatic configuration
-  allow_username_change = false
-  allow_email_change    = false
 }
 
 
