@@ -3,122 +3,161 @@ terraform {
     coder = {
       source = "coder/coder"
     }
-    kubernetes = {
-      source = "hashicorp/kubernetes"
+    proxmox = {
+      source = "bpg/proxmox"
     }
   }
 }
 
-provider "coder" {
+provider "coder" {}
+
+
+# pve setting
+provider "proxmox" {
+  endpoint  = var.proxmox_api_url
+  api_token = "${var.proxmox_api_token_id}=${var.proxmox_api_token_secret}"
+  insecure  = true
+
+  # SSH is needed for file uploads to Proxmox
+  ssh {
+    username = var.proxmox_ssh_user
+    password = var.proxmox_password
+
+    node {
+      name    = var.proxmox_node
+      address = var.proxmox_host
+    }
+  }
 }
 
-#k8s settings
-variable "use_kubeconfig" {
-  type        = bool
-  description = <<-EOF
-  Use host kubeconfig? (true/false)
-
-  Set this to false if the Coder host is itself running as a Pod on the same
-  Kubernetes cluster as you are deploying workspaces to.
-
-  Set this to true if the Coder host is running outside the Kubernetes cluster
-  for workspaces.  A valid "~/.kube/config" must be present on the Coder host.
-  EOF
-  default     = false
+# pve setting
+variable "proxmox_api_url" {
+  type = string
 }
 
-#k8s settings
-variable "namespace" {
+# pve setting
+variable "proxmox_api_token_id" {
+  type      = string
+  sensitive = true
+}
+
+# pve setting
+variable "proxmox_api_token_secret" {
+  type      = string
+  sensitive = true
+}
+
+# pve setting
+variable "proxmox_host" {
+  description = "Proxmox node IP or DNS for SSH"
   type        = string
-  description = "The Kubernetes namespace to create workspaces in (must exist prior to creating workspaces). If the Coder host is itself running as a Pod on the same Kubernetes cluster as you are deploying workspaces to, set this to the same namespace."
-  default = "coder"
+  default = "10.0.10.211"
 }
 
-#k8s settings
-data "coder_parameter" "cpu" {
-  name         = "cpu"
-  display_name = "CPU"
-  description  = "The number of CPU cores"
-  default      = "2"
-  icon         = "/icon/memory.svg"
-  mutable      = true
-  option {
-    name  = "2 Cores"
-    value = "2"
-  }
-  option {
-    name  = "4 Cores"
-    value = "4"
-  }
-  option {
-    name  = "8 Cores"
-    value = "8"
-  }
-  option {
-    name  = "16 Cores"
-    value = "16"
-  }
+# pve setting
+variable "proxmox_password" {
+  description = "Proxmox password (used for SSH)"
+  type        = string
+  sensitive   = true
 }
 
-#k8s settings
-data "coder_parameter" "memory" {
-  name         = "memory"
-  display_name = "Memory"
-  description  = "The amount of memory in GB"
-  default      = "2"
-  icon         = "/icon/memory.svg"
-  mutable      = true
-  option {
-    name  = "2 GB"
-    value = "2"
-  }
-  option {
-    name  = "4 GB"
-    value = "4"
-  }
-  option {
-    name  = "8 GB"
-    value = "8"
-  }
-
+# pve setting
+variable "proxmox_ssh_user" {
+  description = "SSH username on Proxmox node"
+  type        = string
+  default     = "root"
 }
 
-#k8s settings
-data "coder_parameter" "home_disk_size" {
-  name         = "home_disk_size"
-  display_name = "Home disk size"
-  description  = "The size of the home disk in GB"
-  default      = "20"
+# pve setting
+variable "proxmox_node" {
+  description = "Target Proxmox node"
+  type        = string
+  default     = "pve1"
+}
+
+# pve setting
+variable "disk_storage" {
+  description = "Disk storage (e.g., local-lvm)"
+  type        = string
+  default     = "cd6"
+}
+
+# pve setting
+variable "snippet_storage" {
+  description = "Storage with Snippets content"
+  type        = string
+  default     = "cloud"
+}
+
+# pve setting
+variable "bridge" {
+  description = "Bridge (e.g., vmbr0)"
+  type        = string
+  default     = "vmbr40"
+}
+
+# pve setting
+variable "vlan" {
+  description = "VLAN tag (0 none)"
+  type        = number
+  default     = 130
+}
+
+# pve setting
+variable "clone_template_vmid" {
+  description = "VMID of the cloud-init base template to clone"
+  type        = number
+  default = 9511
+}
+
+# pve setting (to be set)
+data "coder_parameter" "cpu_cores" {
+  name         = "cpu_cores"
+  display_name = "CPU Cores"
   type         = "number"
-  icon         = "/emojis/1f4be.png"
-  mutable      = false
+  default      = 8
+  mutable      = true
+}
+
+# pve setting (to be set)
+data "coder_parameter" "memory_mb" {
+  name         = "memory_mb"
+  display_name = "Memory (MB)"
+  type         = "number"
+  default      = 12288
+  mutable      = true
+}
+
+data "coder_parameter" "disk_size_gb" {
+  name         = "disk_size_gb"
+  display_name = "Disk Size (GB)"
+  type         = "number"
+  default      = 30
+  mutable      = true
   validation {
-    min = 1
-    max = 99999
+    min       = 10
+    max       = 100
+    monotonic = "increasing"
   }
 }
 
-#nfs server ip
-data "coder_parameter" "nfs_server" {
-  name         = "nfs_server"
-  type         = "string"
-  display_name = "NFS Server IP"
-  description  = "The NFS server IP address to use for the workspace"
-  default = "10.0.100.240"
-}
-
-#nfs share path
-data "coder_parameter" "nfs_mount_path" {
-  name         = "nfs_mount_path"
-  type         = "string"
-  display_name = "NFS Mount Path"
-  description  = "The path in your workspace container to mount the NFS share to"
-  default      = "/srv/sharing/cd6/files/vibe-coding-share"
+# pve setting (to be set)
+data "coder_parameter" "clone_vm_vmid" {
+  name         = "clone_vm_vmid"
+  display_name = "Clone VMID"
+  type         = "number"
+  mutable      = true
+  default         = 9511
   validation {
-    regex = "^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
-    error = "NFS mount path must be a valid path in your workspace container"
+    min       = 1
+    max       = 100000
+    monotonic = "increasing"
   }
 }
+
+data "coder_workspace" "me" {}
+data "coder_workspace_owner" "me" {}
+
 
 #codex setting
 
@@ -140,40 +179,207 @@ data "coder_parameter" "openai_api_key" {
 }
 
 
-#k8s settings
-provider "kubernetes" {
-  # Authenticate via ~/.kube/config or a Coder-specific ServiceAccount, depending on admin preferences
-  config_path = var.use_kubeconfig == true ? "~/.kube/config" : null
+#nfs server ip
+data "coder_parameter" "nfs_server" {
+  name         = "nfs_server"
+  type         = "string"
+  display_name = "NFS Server IP"
+  description  = "The NFS server IP address to use for the workspace"
+  default = "10.0.30.240"
 }
 
-data "coder_workspace" "me" {}
-data "coder_workspace_owner" "me" {}
+#nfs share path
+data "coder_parameter" "nfs_mount_path" {
+  name         = "nfs_mount_path"
+  type         = "string"
+  display_name = "NFS Mount Path"
+  description  = "The path in your workspace container to mount the NFS share to"
+  default      = "/srv/sharing/cd6/files/vibe-coding-share"
+  validation {
+    regex = "^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
+    error = "NFS mount path must be a valid path in your workspace container"
+  }
+}
+
+
+resource "coder_agent" "dev" {
+  arch = "amd64"
+  os   = "linux"
+
+  env = {
+    GIT_AUTHOR_NAME  = data.coder_workspace_owner.me.name
+    GIT_AUTHOR_EMAIL = data.coder_workspace_owner.me.email
+  }
+
+  startup_script_behavior = "non-blocking"
+  startup_script          = <<-EOT
+    set -e
+    # Add any startup scripts here
+  EOT
+
+  metadata {
+    display_name = "CPU Usage"
+    key          = "cpu_usage"
+    script       = "coder stat cpu"
+    interval     = 10
+    timeout      = 1
+    order        = 1
+  }
+
+  metadata {
+    display_name = "RAM Usage"
+    key          = "ram_usage"
+    script       = "coder stat mem"
+    interval     = 10
+    timeout      = 1
+    order        = 2
+  }
+
+  metadata {
+    display_name = "Disk Usage"
+    key          = "disk_usage"
+    script       = "coder stat disk"
+    interval     = 600
+    timeout      = 30
+    order        = 3
+  }
+}
+
+
+# pve setting (terraform)
+locals {
+  hostname         = lower(data.coder_workspace.me.name)
+  vm_name          = "coder-${lower(data.coder_workspace_owner.me.name)}-${local.hostname}"
+  snippet_filename = "${local.vm_name}.yml"
+  base_user        = replace(replace(replace(lower(data.coder_workspace_owner.me.name), " ", "-"), "/", "-"), "@", "-")             # to avoid special characters in the username
+  linux_user       = contains(["root", "admin", "daemon", "bin", "sys"], local.base_user) ? "${local.base_user}1" : local.base_user # to avoid conflict with system users
+  nfs_target      = "${data.coder_parameter.nfs_server.value}:${data.coder_parameter.nfs_mount_path.value}"
+  nfs_mount_point = "/home/${local.linux_user}/repo"
+
+  rendered_user_data = templatefile("${path.module}/cloud-init/user-data.tftpl", {
+    coder_token           = coder_agent.dev.token
+    coder_init_script_b64 = base64encode(coder_agent.dev.init_script)
+    hostname              = local.vm_name
+    linux_user            = local.linux_user
+    nfs_target            = local.nfs_target
+    nfs_mount_point       = local.nfs_mount_point
+  })
+}
+
+# pve setting (terraform)
+resource "proxmox_virtual_environment_file" "cloud_init_user_data" {
+  content_type = "snippets"
+  datastore_id = var.snippet_storage
+  node_name    = var.proxmox_node
+
+  source_raw {
+    data      = local.rendered_user_data
+    file_name = local.snippet_filename
+  }
+}
+
+# pve setting (terraform)
+resource "proxmox_virtual_environment_vm" "workspace" {
+  name      = local.vm_name
+  node_name = var.proxmox_node
+  #vmid      = data.coder_parameter.clone_vm_vmid.value
+
+  clone {
+    node_name = var.proxmox_node
+    vm_id     = var.clone_template_vmid
+    full      = false
+    retries   = 5
+  }
+
+  agent {
+    enabled = true
+  }
+
+  on_boot = true
+  started = data.coder_workspace.me.transition == "start"
+
+  startup {
+    order = 1
+  }
+
+  scsi_hardware = "virtio-scsi-pci"
+  boot_order    = ["scsi0", "ide2"]
+
+  memory {
+    dedicated = data.coder_parameter.memory_mb.value
+  }
+
+  cpu {
+    cores   = data.coder_parameter.cpu_cores.value
+    sockets = 1
+    type    = "host"
+  }
+
+  network_device {
+    bridge  = var.bridge
+    model   = "virtio"
+    vlan_id = var.vlan == 0 ? null : var.vlan
+  }
+
+  vga {
+    type = "std"
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
+  disk {
+    interface    = "scsi0"
+    datastore_id = var.disk_storage
+    size         = data.coder_parameter.disk_size_gb.value
+  }
+
+
+
+  initialization {
+    type         = "nocloud"
+    datastore_id = var.disk_storage
+
+    user_data_file_id = proxmox_virtual_environment_file.cloud_init_user_data.id
+
+    ip_config {
+      ipv4 {
+        address = "dhcp"
+      }
+    }
+  }
+
+  tags = ["coder", "workspace", local.vm_name]
+
+  depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
+}
 
 #application: vscode
 module "vscode-web" {
-  #count          = data.coder_workspace.me.start_count
+  count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.5.0"
-  agent_id       = coder_agent.main.id
+  agent_id       = coder_agent.dev.id
   subdomain      = false
   accept_license = true
   display_name  = "vscode-web"
   extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
-  folder = "/home/coder/repos"
+  folder = "/home/${local.linux_user}/repo
   use_cached = true
   
 }
 
 #application: code-server
 module "code-server" {
-  #count          = data.coder_workspace.me.start_count
+  count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
-  agent_id       = coder_agent.main.id
+  agent_id       = coder_agent.dev.id
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
-  folder = "/home/coder/repos"
+  folder = "/home/${local.linux_user}/repo
   extensions = ["kilocode.kilo-code","eamodio.gitlens"]
   use_cached = true
   use_cached_extensions = true
@@ -181,22 +387,21 @@ module "code-server" {
 
 #application: filebrowser
 module "filebrowser" {
-  #count      = data.coder_workspace.me.start_count
+  count      = data.coder_workspace.me.start_count
   source     = "registry.coder.com/coder/filebrowser/coder"
   version    = "1.1.4"
-  agent_id   = coder_agent.main.id
+  agent_id   = coder_agent.dev.id
   agent_name = "main"
-  folder   = "/home/coder/repos"
+  folder   = "/home/${local.linux_user}/repo
   subdomain  = false
 }
-
 
 
 module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
-  agent_id       = coder_agent.main.id
-  workdir        = "/home/coder/repos"
+  agent_id       = coder_agent.dev.id
+  workdir        = "/home/${local.linux_user}/repo
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
 
@@ -228,11 +433,9 @@ requires_openai_auth = true
 [features]
 responses_websockets_v2 = true
 
-[projects."/home/coder/repos"]
+[projects."/home/${local.linux_user}/repo]
 trust_level = "trusted"
 
-[projects."/home/coder"]
-trust_level = "trusted"
 
 [notice]
 hide_full_access_warning = true
@@ -242,251 +445,13 @@ EOT
 
 
 module "git-config" {
-  #count    = data.coder_workspace.me.start_count
+  count    = data.coder_workspace.me.start_count
   source   = "registry.coder.com/modules/git-config/coder"
   version  = "1.0.33" # Use the latest version
   
-  agent_id = coder_agent.main.id 
+  agent_id = coder_agent.dev.id 
   
   # Disabling these hides the UI prompts and forces automatic configuration
   allow_username_change = false
   allow_email_change    = false
-}
-
-
-#main resource
-resource "coder_agent" "main" {
-  os   = "linux"
-  arch = "amd64"
-
-  # The following metadata blocks are optional. They are used to display
-  # information about your workspace in the dashboard. You can remove them
-  # if you don't want to display any information.
-  # For basic resources, you can use the `coder stat` command.
-  # If you need more control, you can write your own script.
-  metadata {
-    display_name = "CPU Usage"
-    key          = "0_cpu_usage"
-    script       = "coder stat cpu"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "RAM Usage"
-    key          = "1_ram_usage"
-    script       = "coder stat mem"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Home Disk"
-    key          = "3_home_disk"
-    script       = "coder stat disk --path $${HOME}"
-    interval     = 60
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "CPU Usage (Host)"
-    key          = "4_cpu_usage_host"
-    script       = "coder stat cpu --host"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Memory Usage (Host)"
-    key          = "5_mem_usage_host"
-    script       = "coder stat mem --host"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Load Average (Host)"
-    key          = "6_load_host"
-    # get load avg scaled by number of cores
-    script   = <<EOT
-      echo "`cat /proc/loadavg | awk '{ print $1 }'` `nproc`" | awk '{ printf "%0.2f", $1/$2 }'
-    EOT
-    interval = 60
-    timeout  = 1
-  }
-}
-
-
-#k8s storage
-resource "kubernetes_persistent_volume_claim" "home" {
-  metadata {
-    name      = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-    namespace = var.namespace
-    labels = {
-      "app.kubernetes.io/name"     = "coder-workspace-home"
-      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-      "app.kubernetes.io/part-of"  = "coder"
-      //Coder-specific labels.
-      "com.coder.resource"       = "true"
-      "com.coder.workspace.id"   = data.coder_workspace.me.id
-      "com.coder.workspace.name" = data.coder_workspace.me.name
-    }
-    annotations = {
-      "com.coder.user.email" = data.coder_workspace_owner.me.email
-    }
-  }
-  wait_until_bound = false
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = {
-        storage = "${data.coder_parameter.home_disk_size.value}Gi"
-      }
-    }
-  }
-}
-
-#k8s deploy
-resource "kubernetes_deployment" "main" {
-  #count = data.coder_workspace.me.start_count
-  depends_on = [
-    kubernetes_persistent_volume_claim.home
-  ]
-  wait_for_rollout = false
-  metadata {
-    name      = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-    namespace = var.namespace
-    labels = {
-      "app.kubernetes.io/name"     = "coder-workspace"
-      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-      "app.kubernetes.io/part-of"  = "coder"
-      "com.coder.resource"         = "true"
-      "com.coder.workspace.id"     = data.coder_workspace.me.id
-      "com.coder.workspace.name"   = data.coder_workspace.me.name
-    }
-    annotations = {
-      "com.coder.user.email" = data.coder_workspace_owner.me.email
-    }
-  }
-
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        "app.kubernetes.io/name"     = "coder-workspace"
-        "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-        "app.kubernetes.io/part-of"  = "coder"
-        "com.coder.resource"         = "true"
-        "com.coder.workspace.id"     = data.coder_workspace.me.id
-        "com.coder.workspace.name"   = data.coder_workspace.me.name
-
-      }
-    }
-    strategy {
-      type = "RollingUpdate"
-    }
-
-    template {
-      metadata {
-        labels = {
-          "app.kubernetes.io/name"     = "coder-workspace"
-          "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.name}-${substr(data.coder_workspace.me.id, 0, 6)}"
-          "app.kubernetes.io/part-of"  = "coder"
-          "com.coder.resource"         = "true"
-          "com.coder.workspace.id"     = data.coder_workspace.me.id
-          "com.coder.workspace.name"   = data.coder_workspace.me.name
-
-        }
-      }
-      spec {
-        security_context {
-          run_as_user     = 1000
-          fs_group        = 1000
-          run_as_non_root = true
-        }
-        container {
-          name              = "dev"
-          image             = "codercom/example-node:ubuntu"
-          image_pull_policy = "Always"
-          command = ["sh", "-c",<<EOF
-            # Restore default bash profile/dotfiles (without overwriting existing ones)
-            cp -rn /etc/skel/. /home/coder/ || true
-            
-            # Create user and setup home directory
-            mkdir -p /home/coder/coder-${data.coder_workspace.me.name} && \
-            ${coder_agent.main.init_script}
-            EOF
-          ]
-          security_context {
-            run_as_user = "1000"
-          }
-          env {
-            name  = "CODER_AGENT_TOKEN"
-            value = coder_agent.main.token
-          }
-          resources {
-            requests = {
-              "cpu"    = "250m"
-              "memory" = "512Mi"
-            }
-            limits = {
-              "cpu"    = "${data.coder_parameter.cpu.value}"
-              "memory" = "${data.coder_parameter.memory.value}Gi"
-            }
-          }
-          volume_mount {
-            mount_path = "/home/coder"
-            name       = "home"
-            read_only  = false
-          }
-
-          # nfs mounting for repo only
-          volume_mount {
-            name       = "nfs-repos"
-            mount_path = "/home/coder/repos" # This is where your code lives
-          }
-        }
-
-        volume {
-          name = "home"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.home.metadata.0.name
-            read_only  = false
-          }
-        }
-
-        volume {
-          name = "nfs-repos"
-          nfs {
-            server = data.coder_parameter.nfs_server.value          # Your NFS server IP
-            path   = data.coder_parameter.nfs_mount_path.value     # Your NFS path
-            
-            # Optional: Add /${data.coder_workspace.me.owner} to the path 
-            # if you want individual isolated repo folders per user on the NFS.
-          }
-        }
-      
-
-        affinity {
-          // This affinity attempts to spread out all workspace pods evenly across
-          // nodes.
-          pod_anti_affinity {
-            preferred_during_scheduling_ignored_during_execution {
-              weight = 1
-              pod_affinity_term {
-                topology_key = "kubernetes.io/hostname"
-                label_selector {
-                  match_expressions {
-                    key      = "app.kubernetes.io/name"
-                    operator = "In"
-                    values   = ["coder-workspace"]
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
 }
