@@ -159,7 +159,7 @@ data "coder_parameter" "selected_apps" {
   
   form_type = "multi-select"
   # Set your default selections here (must be JSON encoded)
-  default      = jsonencode(["vscode-web", "filebrowser"]) 
+  default      = jsonencode(["vscode-web", "filebrowser","codex"]) 
   mutable      = true # Allows users to add/remove apps later by editing the workspace
   
   option {
@@ -181,6 +181,12 @@ data "coder_parameter" "selected_apps" {
     name  = "Codex"
     value = "codex"
     icon  = "/icon/robot.svg" 
+  }
+  
+  option {
+    name  = "Antigravity"
+    value = "antigravity"
+    icon  = "/icon/antigravity.svg" 
   }
 }
 
@@ -219,6 +225,17 @@ module "code-server" {
   use_cached = true
   use_cached_extensions = true
 }
+
+#application: antigravity
+module "antigravity" {
+  count          = contains(local.apps_list, "antigravity") ? data.coder_workspace.me.start_count : 0
+  source   = "registry.coder.com/coder/antigravity/coder"
+  version  = "1.0.1"
+  agent_id = coder_agent.main.id
+  folder   = "/home/coder/repos"
+  open_recent = "true"
+}
+
 
 #application: filebrowser
 module "filebrowser" {
