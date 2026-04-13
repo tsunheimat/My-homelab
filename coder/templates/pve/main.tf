@@ -202,7 +202,7 @@ data "coder_parameter" "nfs_mount_path" {
 }
 
 
-resource "coder_agent" "dev" {
+resource "coder_agent" "main" {
   arch = "amd64"
   os   = "linux"
 
@@ -257,8 +257,8 @@ locals {
   nfs_mount_point = "/home/${local.linux_user}/repo"
 
   rendered_user_data = templatefile("${path.module}/cloud-init/user-data.tftpl", {
-    coder_token           = coder_agent.dev.token
-    coder_init_script_b64 = base64encode(coder_agent.dev.init_script)
+    coder_token           = coder_agent.main.token
+    coder_init_script_b64 = base64encode(coder_agent.main.init_script)
     hostname              = local.vm_name
     linux_user            = local.linux_user
     nfs_target            = local.nfs_target
@@ -360,12 +360,12 @@ module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.5.0"
-  agent_id       = coder_agent.dev.id
+  agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
   display_name  = "vscode-web"
   extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
-  folder = "/home/${local.linux_user}/repo
+  folder = "/home/${local.linux_user}/repo"
   use_cached = true
   
 }
@@ -375,11 +375,11 @@ module "code-server" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/code-server/coder"
   version        = "1.4.2"
-  agent_id       = coder_agent.dev.id
+  agent_id       = coder_agent.main.id
   subdomain      = false
   additional_args = "--disable-workspace-trust"
   open_in = "tab"
-  folder = "/home/${local.linux_user}/repo
+  folder = "/home/${local.linux_user}/repo"
   extensions = ["kilocode.kilo-code","eamodio.gitlens"]
   use_cached = true
   use_cached_extensions = true
@@ -390,9 +390,9 @@ module "filebrowser" {
   count      = data.coder_workspace.me.start_count
   source     = "registry.coder.com/coder/filebrowser/coder"
   version    = "1.1.4"
-  agent_id   = coder_agent.dev.id
+  agent_id   = coder_agent.main.id
   agent_name = "main"
-  folder   = "/home/${local.linux_user}/repo
+  folder   = "/home/${local.linux_user}/repo"
   subdomain  = false
 }
 
@@ -400,8 +400,8 @@ module "filebrowser" {
 module "codex" {
   source         = "registry.coder.com/coder-labs/codex/coder"
   version        = "4.3.1"
-  agent_id       = coder_agent.dev.id
-  workdir        = "/home/${local.linux_user}/repo
+  agent_id       = coder_agent.main.id
+  workdir        = "/home/${local.linux_user}/repo"
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
 
@@ -449,9 +449,6 @@ module "git-config" {
   source   = "registry.coder.com/modules/git-config/coder"
   version  = "1.0.33" # Use the latest version
   
-  agent_id = coder_agent.dev.id 
+  agent_id = coder_agent.main.id 
   
-  # Disabling these hides the UI prompts and forces automatic configuration
-  allow_username_change = false
-  allow_email_change    = false
 }
