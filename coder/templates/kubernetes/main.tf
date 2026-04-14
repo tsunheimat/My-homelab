@@ -257,8 +257,8 @@ module "codex" {
   workdir        = "/home/coder/repos"
   openai_api_key = data.coder_parameter.openai_api_key.value
   continue = true
-
-  enable_state_persistence = false
+  enable_state_persistence = true
+  codex_system_prompt = ""
   
 base_config_toml = replace(<<-EOT
 model_provider = "OpenAI"
