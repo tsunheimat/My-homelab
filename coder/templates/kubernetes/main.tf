@@ -261,39 +261,148 @@ module "codex" {
   codex_system_prompt = ""
   
 base_config_toml = replace(<<-EOT
-model_provider = "OpenAI"
-model = "gpt-5.4"
+
+
+################################################################################
+# Approval & Sandbox
+################################################################################
+# 默认是on-request,  - untrusted: only known-safe read-only commands auto-run; others prompt
+# - on-failure: auto-run in sandbox; prompt only on failure for escalation
+# - on-request: model decides when to ask (default)
+# - never: never prompt (risky)
+project_doc_fallback_filenames = ["CLAUDE.md"] # agents.md找不到，则找claude.md
+approval_policy = "never"  # 默认
+sandbox_mode = "danger-full-access" # 开大点好，文件系统/网络沙箱策略: read-only | workspace-write | danger-full-access (无沙箱，极其危险)
+
+################################################################################
+# Core Model Selection
+################################################################################
+model_provider = "packycode" #请自己设置
+model = "gpt-5.4" # Codex使用的主要模型。默认: "gpt-5.2-codex"
+
 review_model = "gpt-5.4"
-model_reasoning_effort = "high"
-disable_response_storage = true
-network_access = "enabled"
-windows_wsl_setup_acknowledged = true
-model_context_window = 1000000
-model_auto_compact_token_limit = 900000
-approvals_reviewer = "user"
 
-sandbox_mode = "danger-full-access"
-approval_policy = "never"
-preferred_auth_method = "apikey"
+########## 模型压缩 ⭐️⭐️⭐️ ⭐️⭐️⭐️重要#######
+# 借鉴https://www.reddit.com/r/codex/comments/1per8fj/something_is_wrong_with_auto_compaction/  还有https://steipete.me/posts/2025/shipping-at-inference-speed
+### ⭐️⭐️⭐️gpt 5.4使用下面两个:
+model_context_window = 1000000 # 模型上下文窗口大小，默认1000000（1M）; gpt-5.4
+model_auto_compact_token_limit = 350000 # for gpt-5.4⭐️虽然是1M ，但是有效注意力不够，可以自己网上查，不建议开的太高
 
-[model_providers.OpenAI]
-name = "OpenAI"
-base_url = "${data.coder_parameter.codex_base_url.value}"
-wire_api = "responses"
+tool_output_token_limit = 40000 # 工具输出最大token; default: 10000 for gpt-5.2-codex
+
+################################################################################
+# Reasoning & Verbosity (Responses API capable models)
+################################################################################
+model_reasoning_effort = "high" # 推理努力程度: minimal | low | medium | high | xhigh (默认: medium; gpt-5.2-codex和gpt-5.2上默认xhigh)
+model_reasoning_summary = "detailed" # 模型输出思维链的summary风格，可以是auto | concise | detailed | none (default: auto)
+# Text verbosity for GPT-5 family (Responses API): low | medium | high (default: medium)
+model_verbosity = "high" # 如有需要可以开大哦！！！low则 Shorten responses
+model_supports_reasoning_summaries = true # Force reasoning
+#service_tier = "fast" # 开启后会变快哦，用量2倍
+
+################################################################################
+# Model Providers (extend/override built-ins)
+################################################################################
+
+[model_providers.packycode]
+name = "OpenAI" # ⭐️⭐️⭐️ 如果你的中转支持， 这里就用大写的OpenAI，可以启用远程压缩效果更好哦， 不支持的话就换个别的字符串就行
+base_url = "https://sub2api-hub.tsunhei.com"
+wire_api = "responses" 
 supports_websockets = true
 requires_openai_auth = true
 
+################################################################################
+# Centralized Feature Flags (preferred)
+################################################################################
 [features]
+shell_tool = true # 启用 shell 工具。默认: true
+apply_patch_freeform = true # 通过自由格式编辑路径包含apply_patch（影响默认工具集）。默认: false
+shell_snapshot = true # 启用shell快照功能。默认: false
+undo = true # 启用undo功能。默认: true
+unified_exec = true # 使用统一 PTY 执行工具
+# exec_policy = true # Enforce rules checks for shell/unified_exec
+multi_agent = true
+steer = true
+prevent_idle_sleep = true
+# voice_transcription = true  
+child_agents_md = true
+
+memories = true # 开启记忆 ⭐️⭐️⭐️
+sqlite = true # 其实可以不设置吧，开了也行
+#fast_mode = true # 必开 -- 当然会让gpt-5.4用量2倍
+
 responses_websockets_v2 = true
 
-[projects."/home/coder/repos"]
-trust_level = "trusted"
+[memories] # ⭐️⭐️⭐️，强烈建议用新模型来总结memories
+consolidation_model = "gpt-5.4"
+extract_model = "gpt-5.4"
+# generate_memories = true # 默认true
+# use_memories = true # 默认true，表示把 memory_summary.md 注入 developer instructions
+max_raw_memories_for_consolidation = 512
+max_unused_days = 30 # 默认 30
+max_rollout_age_days = 45 # 默认 30
+# max_rollouts_per_startup = 16 # 默认 16
+# min_rollout_idle_hours = 6 # 默认 6
 
-[projects."/home/coder"]
-trust_level = "trusted"
+[agents]
+max_threads = 12
+max_depth = 2
+
+
+
+################################################################################
+# Shell Environment Policy for spawned processes (table)
+################################################################################
+[shell_environment_policy] # Shell环境配置
+# 环境变量继承策略inherit: all (default) | core | none 
+inherit = "all" # 可以全给他看
+# 是否忽略默认的 KEY/SECRET/TOKEN Skip default excludes for names containing KEY/SECRET/TOKEN (case-insensitive). Default: true
+ignore_default_excludes = true # 意思是可以给他看
+# Case-insensitive glob patterns to remove (e.g., "AWS_*", "AZURE_*"). Default: []
+# exclude = []
+# Explicit key/value overrides (always win). Default: {}
+# set = {}
+# Whitelist; if non-empty, keep only matching vars. Default: []
+# include_only = []
+# Experimental: run via user shell profile. Default: false
+# experimental_use_profile = false
+
+################################################################################
+# Sandbox settings (tables)
+################################################################################
+[sandbox_workspace_write]
+# Additional writable roots beyond the workspace (cwd). Default: [] 例如在/root/paddlejob/RLHF 启动，但需要让他访问 /root/paddlejob 下的其他文件夹，可以在这里加上 /root/paddlejob
+# writable_roots = [] 
+network_access = true # # Allow outbound network access inside the sandbox. Default: false
+
+################################################################################
+# Notifications
+################################################################################
+# External notifier program (argv array). When unset: disabled.
+# Example: notify = ["notify-send", "Codex"]
+
+
+[tui]
+# Send desktop notifications when approvals are required or a turn completes. # Defaults to false.
+notifications = true
+
+# 使用包装脚本以集中配置通知偏好（声音/图标/分组等）
+# notify = [ ] # linux机器不开 wrapper.sh
+
+################################################################################
+# Project Controls
+################################################################################
+# Max bytes from AGENTS.md to embed into first-turn instructions. Default: 32768
+# project_doc_max_bytes = 32768
+
+
+status_line = ["model-name", "project-root", "context-usage","fast-mode"]
+
 
 [notice]
-hide_full_access_warning = true
+hide_rate_limit_model_nudge = true
+
+
 EOT
   , "\r", "") # This tells Terraform to replace all carriage returns with nothing
 }
