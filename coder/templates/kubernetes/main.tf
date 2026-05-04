@@ -139,6 +139,15 @@ data "coder_parameter" "openai_api_key" {
   mutable      = true
 }
 
+data "coder_parameter" "gitlab_host" {
+  name         = "gitlab_host"
+  display_name = "GitLab Host"
+  description  = "The GitLab hostname used for Git HTTPS authentication."
+  type         = "string"
+  default      = "gitlab.tsunhei.com"
+  mutable      = true
+}
+
 
 #k8s settings
 provider "kubernetes" {
@@ -148,6 +157,10 @@ provider "kubernetes" {
 
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
+
+data "coder_external_auth" "gitlab" {
+  id = "gitlab"
+}
 
 
 # 1. Define the multi-select parameter
@@ -408,21 +421,22 @@ EOT
 }
 
 
-module "git-config" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/modules/git-config/coder"
-  version  = "1.0.33" # Use the latest version
-  
-  agent_id = coder_agent.main.id 
-  
-}
-
-
-
 #main resource
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
+
+  startup_script_behavior = "non-blocking"
+  startup_script          = replace(<<-EOT
+    set -e
+
+    rm -f "$HOME/.git-credentials"
+    rm -f "$(printf '%s\r' "$HOME/.git-credentials")"
+    git config --global credential.helper store
+    printf '%s\n' "https://oauth2:${data.coder_external_auth.gitlab.access_token}@${data.coder_parameter.gitlab_host.value}" > "$HOME/.git-credentials"
+    chmod 600 "$HOME/.git-credentials"
+  EOT
+  , "\r", "")
 
   # The following metadata blocks are optional. They are used to display
   # information about your workspace in the dashboard. You can remove them
