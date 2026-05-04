@@ -148,7 +148,6 @@ data "coder_parameter" "gitlab_host" {
   mutable      = true
 }
 
-
 #k8s settings
 provider "kubernetes" {
   # Authenticate via ~/.kube/config or a Coder-specific ServiceAccount, depending on admin preferences
@@ -432,9 +431,9 @@ resource "coder_agent" "main" {
 
     rm -f "$HOME/.git-credentials"
     rm -f "$(printf '%s\r' "$HOME/.git-credentials")"
-    git config --global credential.helper store
-    printf '%s\n' "https://oauth2:${data.coder_external_auth.gitlab.access_token}@${data.coder_parameter.gitlab_host.value}" > "$HOME/.git-credentials"
-    chmod 600 "$HOME/.git-credentials"
+    git config --global --unset-all credential.helper || true
+    git config --global user.name "${data.coder_workspace_owner.me.name}"
+    git config --global user.email "${data.coder_workspace_owner.me.email}"
   EOT
   , "\r", "")
 
