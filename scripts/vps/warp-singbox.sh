@@ -90,7 +90,18 @@ rand_password() {
 profile_value() {
   local profile="$1"
   local key="$2"
-  awk -F'= *' -v k="$key" '$1 ~ "^[[:space:]]*" k "[[:space:]]*$" { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }' "$profile"
+  awk -v k="$key" '
+    index($0, "=") {
+      left = substr($0, 1, index($0, "=") - 1)
+      right = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", left)
+      if (left == k) {
+        gsub(/^[[:space:]]+|[[:space:]\r]+$/, "", right)
+        print right
+        exit
+      }
+    }
+  ' "$profile"
 }
 
 profile_address_v4() {
