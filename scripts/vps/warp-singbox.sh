@@ -393,7 +393,7 @@ detect_warp_tool
 EXISTING_ACME_EMAIL="$(config_json_value "email")"
 EXISTING_CF_TOKEN="$(config_json_value "api_token")"
 
-prompt DOMAIN_V4 "IPv4/SNI domain" "xxx.com
+prompt DOMAIN_V4 "IPv4/SNI domain" "xxx.com"
 prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
 prompt_keep_existing ACME_EMAIL "ACME email" "$EXISTING_ACME_EMAIL"
 prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$EXISTING_CF_TOKEN" true
