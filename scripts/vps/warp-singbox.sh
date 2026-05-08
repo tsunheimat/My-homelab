@@ -21,8 +21,8 @@ SECONDARY_VNIC_PRIORITY="${SECONDARY_VNIC_PRIORITY:-100}"
 SECONDARY_VNIC_PRIORITY_BASE="${SECONDARY_VNIC_PRIORITY_BASE:-$SECONDARY_VNIC_PRIORITY}"
 WARP_YG_FAIL_MARKER=""
 EGRESS_INTERFACE="${EGRESS_INTERFACE:-}"
-EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-${EGRESS_INTERFACE:-enp0s6}}"
-EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-${EGRESS_INTERFACE:-enp1s0}}"
+EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-}"
+EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-}"
 
 declare -A USER_PASSWORDS
 declare -A EGRESS_IFACES
@@ -278,6 +278,20 @@ validate_netplan_interface_name() {
   [[ "$interface" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "Invalid interface name for netplan: $interface"
 }
 
+default_egress_interface() {
+  local index="$1"
+
+  if [[ -n "$EGRESS_INTERFACE" ]]; then
+    printf '%s' "$EGRESS_INTERFACE"
+    return 0
+  fi
+
+  case "$index" in
+    1) printf 'enp0s6' ;;
+    2) printf 'enp1s0' ;;
+  esac
+}
+
 interface_name_from_link_index() {
   local link_index="$1"
 
@@ -305,6 +319,20 @@ normalize_interface_name() {
 
   ip link show dev "$resolved_interface" >/dev/null 2>&1 || die "Network interface does not exist: $resolved_interface"
   printf '%s' "$resolved_interface"
+}
+
+system_non_loopback_interfaces() {
+  ip -o link show | awk -F': ' '
+    $0 !~ /state UP/ {
+      next
+    }
+    {
+      split($2, name, "@")
+      if (name[1] != "lo") {
+        print name[1]
+      }
+    }
+  '
 }
 
 secondary_vnic_ipv4_source() {
@@ -399,11 +427,28 @@ unique_secondary_egress_indexes() {
   done
 }
 
+detected_secondary_vnic_interfaces() {
+  local iface primary_iface
+  declare -A seen_ifaces=()
+
+  primary_iface="${EGRESS_IFACES[1]-}"
+  [[ -n "$primary_iface" ]] && seen_ifaces["$primary_iface"]=1
+
+  while IFS= read -r iface; do
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen_ifaces[$iface]-}" ]] && continue
+    seen_ifaces["$iface"]=1
+    printf '%s\n' "$iface"
+  done < <(system_non_loopback_interfaces)
+}
+
 secondary_vnic_entry_yaml() {
   local index="$1"
+  local selected_interface="${2:-}"
   local interface ipv4_source ipv4 gateway table priority prompt_var
 
-  interface="$(secondary_vnic_interface "$index")"
+  interface="$selected_interface"
+  [[ -n "$interface" ]] || interface="$(secondary_vnic_interface "$index")"
   if [[ -z "$interface" ]]; then
     prompt_var="SECONDARY_VNIC_${index}_INTERFACE"
     prompt "$prompt_var" "Secondary VNIC interface $index" "$(secondary_vnic_defaults "$index")"
@@ -454,13 +499,13 @@ EOF
 }
 
 write_secondary_vnic_netplan() {
-  local count index backup_path entries
-  local -a unique_indexes
+  local count index backup_path entries iface
+  local -a unique_indexes detected_ifaces
 
-  count="${SECONDARY_VNIC_COUNT:-${WARP_INTERFACE_COUNT:-}}"
-  [[ -n "$count" ]] || prompt count "How many total egress/WARP slots" "2"
+  count="${SECONDARY_VNIC_COUNT:-${WARP_INTERFACE_COUNT:-2}}"
+  [[ -n "$count" ]] || prompt count "How many total VNICs" "2"
   validate_positive_integer "$count" "SECONDARY_VNIC_COUNT"
-  ((count >= 2)) || die "At least 2 interfaces are required to write secondary VNIC netplan"
+  ((count >= 2)) || die "At least 2 total VNICs are required to write secondary VNIC netplan"
   validate_positive_integer "$SECONDARY_VNIC_TABLE_BASE" "SECONDARY_VNIC_TABLE_BASE"
   validate_positive_integer "$SECONDARY_VNIC_PRIORITY_BASE" "SECONDARY_VNIC_PRIORITY_BASE"
 
@@ -472,7 +517,21 @@ write_secondary_vnic_netplan() {
     entries+="${entries:+$'\n'}$(secondary_vnic_entry_yaml "$index")"
   done
 
-  [[ -n "$entries" ]] || die "No unique secondary egress interfaces found to write into netplan"
+  if [[ -z "$entries" ]]; then
+    mapfile -t detected_ifaces < <(detected_secondary_vnic_interfaces)
+    index=2
+    for iface in "${detected_ifaces[@]}"; do
+      ((index <= count)) || break
+      entries+="${entries:+$'\n'}$(secondary_vnic_entry_yaml "$index" "$iface")"
+      ((index++))
+    done
+  fi
+
+  if [[ -z "$entries" ]]; then
+    echo "No unique secondary VNIC interfaces found; no secondary netplan was written."
+    echo "Set SECONDARY_VNIC_2_INTERFACE=enp1s0 if the secondary NIC is not detectable with ip link."
+    return 0
+  fi
 
   if [[ -f "$SECONDARY_NETPLAN_PATH" ]]; then
     backup_path="$SECONDARY_NETPLAN_PATH.bak-$(date +%Y%m%d-%H%M%S)"
@@ -503,7 +562,7 @@ load_egress_bindings() {
 
     iface="${!iface_var-}"
     [[ -n "$iface" ]] || iface="$(config_bind_interface "$(warp_profile_tag 4 "$index")")"
-    [[ -n "$iface" ]] || iface="$EGRESS_INTERFACE"
+    [[ -n "$iface" ]] || iface="$(default_egress_interface "$index")"
     if [[ -z "$iface" && "$index" -gt 1 ]]; then
       previous_iface="EGRESS_$((index - 1))_INTERFACE"
       iface="${!previous_iface-}"
@@ -533,15 +592,20 @@ configure_egress_interfaces() {
   for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
     iface_var="EGRESS_${index}_INTERFACE"
     if [[ "$force" != "true" && -n "${!iface_var-}" ]]; then
+      printf -v "$iface_var" '%s' "$(normalize_interface_name "${!iface_var}")"
       continue
     fi
 
     default_value="${!iface_var-}"
     [[ -n "$default_value" ]] || default_value="$(config_bind_interface "$(warp_profile_tag 4 "$index")")"
-    [[ -n "$default_value" ]] || default_value="$EGRESS_INTERFACE"
+    [[ -n "$default_value" ]] || default_value="$(default_egress_interface "$index")"
     if [[ -z "$default_value" && "$index" -gt 1 ]]; then
       previous_iface_var="EGRESS_$((index - 1))_INTERFACE"
       default_value="${!previous_iface_var-}"
+    fi
+    if [[ "$force" != "true" && -n "$default_value" ]]; then
+      printf -v "$iface_var" '%s' "$(normalize_interface_name "$default_value")"
+      continue
     fi
     if [[ -n "$default_value" ]]; then
       prompt "$iface_var" "Egress interface name/index for WARP slot $index (repeat allowed)" "$default_value"
