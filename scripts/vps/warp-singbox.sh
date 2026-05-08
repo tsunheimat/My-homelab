@@ -13,14 +13,29 @@ WARP_YG_ACCOUNT_SOURCE="${WARP_YG_ACCOUNT_SOURCE:-auto}"
 WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
+WARP_INTERFACE_COUNT="${WARP_INTERFACE_COUNT:-}"
+SECONDARY_NETPLAN_PATH="${SECONDARY_NETPLAN_PATH:-/etc/netplan/60-secondary-vnic.yaml}"
+SECONDARY_VNIC_TABLE="${SECONDARY_VNIC_TABLE:-100}"
+SECONDARY_VNIC_TABLE_BASE="${SECONDARY_VNIC_TABLE_BASE:-$SECONDARY_VNIC_TABLE}"
+SECONDARY_VNIC_PRIORITY="${SECONDARY_VNIC_PRIORITY:-100}"
+SECONDARY_VNIC_PRIORITY_BASE="${SECONDARY_VNIC_PRIORITY_BASE:-$SECONDARY_VNIC_PRIORITY}"
 WARP_YG_FAIL_MARKER=""
-EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-enp0s6}"
-EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-enp1s0}"
+EGRESS_INTERFACE="${EGRESS_INTERFACE:-}"
+EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-${EGRESS_INTERFACE:-enp0s6}}"
+EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-${EGRESS_INTERFACE:-enp1s0}}"
 
 declare -A USER_PASSWORDS
 declare -A EGRESS_IFACES
 declare -A EGRESS_V4_ADDRS
 declare -A EGRESS_V6_ADDRS
+declare -A WARP_PROFILE_PATHS
+declare -A WARP_SINGBOX_PATHS
+declare -A WARP_KEYS
+declare -A WARP_ADDRS
+declare -A WARP_PEERS
+declare -A WARP_ENDPOINTS
+declare -A WARP_PORTS
+declare -A WARP_RESERVED
 
 die() {
   echo "ERROR: $*" >&2
@@ -113,6 +128,53 @@ config_user_password() {
   ' "$CONFIG_PATH"
 }
 
+config_interface_count() {
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk '
+    /"(name|tag)"[[:space:]]*:[[:space:]]*"(direct|warp)-v[46]-[0-9]+"/ {
+      line = $0
+      sub(/^.*"(direct|warp)-v[46]-/, "", line)
+      sub(/".*$/, "", line)
+      if (line + 0 > max) {
+        max = line + 0
+      }
+    }
+    END {
+      if (max > 0) {
+        print max
+      }
+    }
+  ' "$CONFIG_PATH"
+}
+
+config_bind_interface() {
+  local tag="$1"
+
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk -v tag="$tag" '
+    /"tag"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"tag"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      found = (line == tag)
+    }
+    found && /"bind_interface"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"bind_interface"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      print line
+      exit
+    }
+  ' "$CONFIG_PATH"
+}
+
+validate_positive_integer() {
+  local value="$1"
+  local label="$2"
+
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$label must be a positive integer"
+}
+
 legacy_user_name() {
   local user_name="$1"
 
@@ -149,16 +211,275 @@ interface_address() {
   fi
 }
 
-load_egress_bindings() {
-  local index iface_var v4_var v6_var iface v4_addr v6_addr
+interface_ipv4_cidr() {
+  local interface="$1"
 
-  for index in 1 2; do
+  ip -o -4 addr show dev "$interface" scope global | awk 'NR == 1 { print $4; exit }'
+}
+
+ipv4_to_int() {
+  local ip="$1"
+  local a b c d
+  local value
+
+  IFS=. read -r a b c d <<< "$ip"
+  for value in "$a" "$b" "$c" "$d"; do
+    [[ "$value" =~ ^[0-9]+$ && "$value" -ge 0 && "$value" -le 255 ]] || die "Invalid IPv4 address: $ip"
+  done
+
+  printf '%u' $(( (a << 24) + (b << 16) + (c << 8) + d ))
+}
+
+int_to_ipv4() {
+  local value="$1"
+
+  printf '%u.%u.%u.%u' \
+    $(( (value >> 24) & 255 )) \
+    $(( (value >> 16) & 255 )) \
+    $(( (value >> 8) & 255 )) \
+    $(( value & 255 ))
+}
+
+calculated_ipv4_gateway() {
+  local cidr="$1"
+  local ip prefix ip_int mask network gateway
+
+  ip="${cidr%/*}"
+  prefix="${cidr#*/}"
+  [[ "$cidr" == */* ]] || die "IPv4 CIDR is required to calculate gateway: $cidr"
+  [[ "$prefix" =~ ^[0-9]+$ && "$prefix" -ge 1 && "$prefix" -le 31 ]] || die "Invalid IPv4 prefix: $cidr"
+
+  ip_int="$(ipv4_to_int "$ip")"
+  mask=$(( (0xffffffff << (32 - prefix)) & 0xffffffff ))
+  network=$(( ip_int & mask ))
+  gateway=$(( network + 1 ))
+
+  int_to_ipv4 "$gateway"
+}
+
+fallback_ipv4_gateway() {
+  local ip="$1"
+  local a b c d
+
+  IFS=. read -r a b c d <<< "$ip"
+  ipv4_to_int "$ip" >/dev/null
+  printf '%s.%s.%s.1' "$a" "$b" "$c"
+}
+
+strip_ipv4_prefix() {
+  local value="$1"
+
+  printf '%s' "${value%/*}"
+}
+
+validate_netplan_interface_name() {
+  local interface="$1"
+
+  [[ "$interface" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "Invalid interface name for netplan: $interface"
+}
+
+secondary_vnic_ipv4_source() {
+  local index="$1"
+  local interface="$2"
+  local cidr_var egress_cidr_var egress_ipv4_var
+  local value
+
+  cidr_var="SECONDARY_VNIC_${index}_IPV4_CIDR"
+  egress_cidr_var="EGRESS_${index}_IPV4_CIDR"
+  egress_ipv4_var="EGRESS_${index}_IPV4"
+  value="${!cidr_var-}"
+  [[ -n "$value" ]] || value="${!egress_cidr_var-}"
+  [[ -n "$value" ]] || value="${!egress_ipv4_var-}"
+  if [[ -z "$value" && "$index" == "2" ]]; then
+    value="${SECONDARY_VNIC_IPV4_CIDR:-}"
+  fi
+  [[ -n "$value" ]] || value="$(interface_ipv4_cidr "$interface" || true)"
+  printf '%s' "$value"
+}
+
+secondary_vnic_interface() {
+  local index="$1"
+  local secondary_var egress_var interface
+
+  secondary_var="SECONDARY_VNIC_${index}_INTERFACE"
+  egress_var="EGRESS_${index}_INTERFACE"
+  interface="${!secondary_var-}"
+  [[ -n "$interface" ]] || interface="${!egress_var-}"
+  if [[ -z "$interface" && "$index" == "2" ]]; then
+    interface="${SECONDARY_VNIC_INTERFACE:-}"
+  fi
+  printf '%s' "$interface"
+}
+
+secondary_vnic_gateway_override() {
+  local index="$1"
+  local gateway_var value
+
+  gateway_var="SECONDARY_VNIC_${index}_GATEWAY"
+  value="${!gateway_var-}"
+  if [[ -z "$value" && "$index" == "2" ]]; then
+    value="${SECONDARY_VNIC_GATEWAY:-}"
+  fi
+  printf '%s' "$value"
+}
+
+secondary_vnic_table() {
+  local index="$1"
+  local table_var value
+
+  table_var="SECONDARY_VNIC_${index}_TABLE"
+  value="${!table_var-}"
+  [[ -n "$value" ]] || value="$((SECONDARY_VNIC_TABLE_BASE + index - 2))"
+  printf '%s' "$value"
+}
+
+secondary_vnic_priority() {
+  local index="$1"
+  local priority_var value
+
+  priority_var="SECONDARY_VNIC_${index}_PRIORITY"
+  value="${!priority_var-}"
+  [[ -n "$value" ]] || value="$((SECONDARY_VNIC_PRIORITY_BASE + index - 2))"
+  printf '%s' "$value"
+}
+
+secondary_vnic_defaults() {
+  local index="$1"
+
+  if [[ "$index" == "2" ]]; then
+    printf 'enp1s0'
+  else
+    printf 'enp%ss0' "$((index - 1))"
+  fi
+}
+
+unique_secondary_egress_indexes() {
+  local index iface
+  declare -A seen_ifaces=()
+
+  if [[ -n "${EGRESS_IFACES[1]-}" ]]; then
+    seen_ifaces["${EGRESS_IFACES[1]}"]=1
+  fi
+
+  for ((index = 2; index <= WARP_INTERFACE_COUNT; index++)); do
+    iface="${EGRESS_IFACES[$index]-}"
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen_ifaces[$iface]-}" ]] && continue
+    seen_ifaces["$iface"]=1
+    printf '%s\n' "$index"
+  done
+}
+
+secondary_vnic_entry_yaml() {
+  local index="$1"
+  local interface ipv4_source ipv4 gateway table priority prompt_var
+
+  interface="$(secondary_vnic_interface "$index")"
+  if [[ -z "$interface" ]]; then
+    prompt_var="SECONDARY_VNIC_${index}_INTERFACE"
+    prompt "$prompt_var" "Secondary VNIC interface $index" "$(secondary_vnic_defaults "$index")"
+    interface="${!prompt_var}"
+  fi
+  validate_netplan_interface_name "$interface"
+
+  ipv4_source="$(secondary_vnic_ipv4_source "$index" "$interface")"
+  if [[ -z "$ipv4_source" ]]; then
+    prompt_var="SECONDARY_VNIC_${index}_IPV4_CIDR"
+    prompt "$prompt_var" "Secondary IPv4 CIDR for $interface" "10.0.$((index - 1)).2/24"
+    ipv4_source="${!prompt_var}"
+  fi
+  ipv4="$(strip_ipv4_prefix "$ipv4_source")"
+  ipv4_to_int "$ipv4" >/dev/null
+
+  gateway="$(secondary_vnic_gateway_override "$index")"
+  if [[ -n "$gateway" ]]; then
+    ipv4_to_int "$gateway" >/dev/null
+  elif [[ "$ipv4_source" == */* ]]; then
+    gateway="$(calculated_ipv4_gateway "$ipv4_source")"
+  else
+    gateway="$(fallback_ipv4_gateway "$ipv4")"
+    echo "WARNING: No IPv4 prefix was available for $interface; using gateway $gateway from $ipv4/24 assumption." >&2
+  fi
+
+  table="$(secondary_vnic_table "$index")"
+  priority="$(secondary_vnic_priority "$index")"
+  validate_positive_integer "$table" "SECONDARY_VNIC_${index}_TABLE"
+  validate_positive_integer "$priority" "SECONDARY_VNIC_${index}_PRIORITY"
+
+  cat <<EOF
+    $interface:
+      dhcp4: true
+      dhcp6: true
+      accept-ra: true
+      routes:
+        - to: default
+          via: $gateway
+          table: $table
+      routing-policy:
+        - from: $ipv4/32
+          table: $table
+          priority: $priority
+EOF
+
+  echo "Secondary interface $index: $interface, IPv4 $ipv4, gateway $gateway, table $table, priority $priority" >&2
+}
+
+write_secondary_vnic_netplan() {
+  local count index backup_path entries
+  local -a unique_indexes
+
+  count="${SECONDARY_VNIC_COUNT:-${WARP_INTERFACE_COUNT:-}}"
+  [[ -n "$count" ]] || prompt count "How many total egress/WARP slots" "2"
+  validate_positive_integer "$count" "SECONDARY_VNIC_COUNT"
+  ((count >= 2)) || die "At least 2 interfaces are required to write secondary VNIC netplan"
+  validate_positive_integer "$SECONDARY_VNIC_TABLE_BASE" "SECONDARY_VNIC_TABLE_BASE"
+  validate_positive_integer "$SECONDARY_VNIC_PRIORITY_BASE" "SECONDARY_VNIC_PRIORITY_BASE"
+
+  mapfile -t unique_indexes < <(unique_secondary_egress_indexes)
+  entries=""
+  for index in "${unique_indexes[@]}"; do
+    ((index <= count)) || continue
+    entries+="${entries:+$'\n'}$(secondary_vnic_entry_yaml "$index")"
+  done
+
+  [[ -n "$entries" ]] || die "No unique secondary egress interfaces found to write into netplan"
+
+  if [[ -f "$SECONDARY_NETPLAN_PATH" ]]; then
+    backup_path="$SECONDARY_NETPLAN_PATH.bak-$(date +%Y%m%d-%H%M%S)"
+    cp "$SECONDARY_NETPLAN_PATH" "$backup_path"
+    chmod 600 "$backup_path"
+    echo "Backed up old secondary netplan to $backup_path"
+  fi
+
+  umask 077
+  cat > "$SECONDARY_NETPLAN_PATH" <<EOF
+network:
+  version: 2
+  ethernets:
+$entries
+EOF
+
+  chmod 600 "$SECONDARY_NETPLAN_PATH"
+  echo "Wrote secondary VNIC netplan to $SECONDARY_NETPLAN_PATH"
+}
+
+load_egress_bindings() {
+  local index iface_var v4_var v6_var iface v4_addr v6_addr previous_iface
+
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
     iface_var="EGRESS_${index}_INTERFACE"
     v4_var="EGRESS_${index}_IPV4"
     v6_var="EGRESS_${index}_IPV6"
 
     iface="${!iface_var-}"
+    [[ -n "$iface" ]] || iface="$(config_bind_interface "$(warp_profile_tag 4 "$index")")"
+    [[ -n "$iface" ]] || iface="$EGRESS_INTERFACE"
+    if [[ -z "$iface" && "$index" -gt 1 ]]; then
+      previous_iface="EGRESS_$((index - 1))_INTERFACE"
+      iface="${!previous_iface-}"
+    fi
     [[ -n "$iface" ]] || die "$iface_var is required"
+    printf -v "$iface_var" '%s' "$iface"
 
     v4_addr="${!v4_var-}"
     [[ -n "$v4_addr" ]] || v4_addr="$(interface_address 4 "$iface")"
@@ -171,6 +492,31 @@ load_egress_bindings() {
     EGRESS_IFACES[$index]="$iface"
     EGRESS_V4_ADDRS[$index]="$v4_addr"
     EGRESS_V6_ADDRS[$index]="$v6_addr"
+  done
+}
+
+configure_egress_interfaces() {
+  local force="${1:-false}"
+  local index iface_var previous_iface_var default_value
+
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    iface_var="EGRESS_${index}_INTERFACE"
+    if [[ "$force" != "true" && -n "${!iface_var-}" ]]; then
+      continue
+    fi
+
+    default_value="${!iface_var-}"
+    [[ -n "$default_value" ]] || default_value="$(config_bind_interface "$(warp_profile_tag 4 "$index")")"
+    [[ -n "$default_value" ]] || default_value="$EGRESS_INTERFACE"
+    if [[ -z "$default_value" && "$index" -gt 1 ]]; then
+      previous_iface_var="EGRESS_$((index - 1))_INTERFACE"
+      default_value="${!previous_iface_var-}"
+    fi
+    if [[ -n "$default_value" ]]; then
+      prompt "$iface_var" "Egress interface for WARP slot $index (repeat allowed)" "$default_value"
+    else
+      prompt "$iface_var" "Egress interface for WARP slot $index (repeat allowed)"
+    fi
   done
 }
 
@@ -538,16 +884,26 @@ json_reserved() {
   awk '
     /"reserved"[[:space:]]*:/ {
       line = $0
-      while (line !~ /\]/ && getline next_line) {
-        line = line " " next_line
+      if (line ~ /\[/) {
+        while (line !~ /\]/ && getline next_line) {
+          line = line " " next_line
+        }
+        sub(/.*"reserved"[[:space:]]*:[[:space:]]*\[/, "", line)
+        sub(/\].*/, "", line)
+        gsub(/[[:space:]]+/, "", line)
+        if (line != "") {
+          print "[" line "]"
+        }
+        exit
       }
-      sub(/.*"reserved"[[:space:]]*:[[:space:]]*\[/, "", line)
-      sub(/\].*/, "", line)
-      gsub(/[[:space:]]+/, "", line)
-      if (line != "") {
-        print line
+      if (line ~ /"reserved"[[:space:]]*:[[:space:]]*"/) {
+        sub(/.*"reserved"[[:space:]]*:[[:space:]]*"/, "", line)
+        sub(/".*/, "", line)
+        if (line != "") {
+          print "\"" line "\""
+        }
+        exit
       }
-      exit
     }
   ' "$profile"
 }
@@ -696,7 +1052,7 @@ load_passwords_from_config() {
 
   for family in 4 6; do
     for kind in direct warp; do
-      for index in 1 2; do
+      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
         user_name="${kind}-v${family}-${index}"
         existing="$(config_user_password "$user_name")"
         if [[ -z "$existing" ]]; then
@@ -714,7 +1070,7 @@ regenerate_passwords() {
 
   for family in 4 6; do
     for kind in direct warp; do
-      for index in 1 2; do
+      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
         user_name="${kind}-v${family}-${index}"
         USER_PASSWORDS[$user_name]="$(rand_password)"
       done
@@ -734,100 +1090,146 @@ detect_existing_warp_flavor() {
   fi
 }
 
-set_warp_profile_paths() {
+warp_profile_path_for() {
   local flavor="$1"
+  local tag="$2"
 
   case "$flavor" in
-    warp-yg)
-      WARP4_1_PROFILE="$WARP_YG_BASE/warp-ipv4-1/warp-yg-profile.conf"
-      WARP4_2_PROFILE="$WARP_YG_BASE/warp-ipv4-2/warp-yg-profile.conf"
-      WARP6_1_PROFILE="$WARP_YG_BASE/warp-ipv6-1/warp-yg-profile.conf"
-      WARP6_2_PROFILE="$WARP_YG_BASE/warp-ipv6-2/warp-yg-profile.conf"
-      WARP4_1_SINGBOX="$WARP_YG_BASE/warp-ipv4-1/warp-yg-singbox.json"
-      WARP4_2_SINGBOX="$WARP_YG_BASE/warp-ipv4-2/warp-yg-singbox.json"
-      WARP6_1_SINGBOX="$WARP_YG_BASE/warp-ipv6-1/warp-yg-singbox.json"
-      WARP6_2_SINGBOX="$WARP_YG_BASE/warp-ipv6-2/warp-yg-singbox.json"
-      ;;
-    warp-go)
-      WARP4_1_PROFILE="$WARP_GO_BASE/warp-ipv4-1/warp-go-profile.conf"
-      WARP4_2_PROFILE="$WARP_GO_BASE/warp-ipv4-2/warp-go-profile.conf"
-      WARP6_1_PROFILE="$WARP_GO_BASE/warp-ipv6-1/warp-go-profile.conf"
-      WARP6_2_PROFILE="$WARP_GO_BASE/warp-ipv6-2/warp-go-profile.conf"
-      WARP4_1_SINGBOX="$WARP_GO_BASE/warp-ipv4-1/warp-go-singbox.json"
-      WARP4_2_SINGBOX="$WARP_GO_BASE/warp-ipv4-2/warp-go-singbox.json"
-      WARP6_1_SINGBOX="$WARP_GO_BASE/warp-ipv6-1/warp-go-singbox.json"
-      WARP6_2_SINGBOX="$WARP_GO_BASE/warp-ipv6-2/warp-go-singbox.json"
-      ;;
-    wgcf)
-      WARP4_1_PROFILE="$WGCF_BASE/warp-ipv4-1/wgcf-profile.conf"
-      WARP4_2_PROFILE="$WGCF_BASE/warp-ipv4-2/wgcf-profile.conf"
-      WARP6_1_PROFILE="$WGCF_BASE/warp-ipv6-1/wgcf-profile.conf"
-      WARP6_2_PROFILE="$WGCF_BASE/warp-ipv6-2/wgcf-profile.conf"
-      WARP4_1_SINGBOX=""
-      WARP4_2_SINGBOX=""
-      WARP6_1_SINGBOX=""
-      WARP6_2_SINGBOX=""
-      ;;
+    warp-yg) printf '%s/%s/warp-yg-profile.conf' "$WARP_YG_BASE" "$tag" ;;
+    warp-go) printf '%s/%s/warp-go-profile.conf' "$WARP_GO_BASE" "$tag" ;;
+    wgcf) printf '%s/%s/wgcf-profile.conf' "$WGCF_BASE" "$tag" ;;
+    *) die "Unsupported WARP flavor: $flavor" ;;
+  esac
+}
+
+warp_singbox_path_for() {
+  local flavor="$1"
+  local tag="$2"
+
+  case "$flavor" in
+    warp-yg) printf '%s/%s/warp-yg-singbox.json' "$WARP_YG_BASE" "$tag" ;;
+    warp-go) printf '%s/%s/warp-go-singbox.json' "$WARP_GO_BASE" "$tag" ;;
+    wgcf) printf '' ;;
+    *) die "Unsupported WARP flavor: $flavor" ;;
+  esac
+}
+
+set_warp_profile_paths() {
+  local flavor="$1"
+  local family index key tag
+
+  case "$flavor" in
+    warp-yg | warp-go | wgcf) ;;
     *)
       die "Unsupported WARP flavor: $flavor"
       ;;
   esac
+
+  WARP_PROFILE_PATHS=()
+  WARP_SINGBOX_PATHS=()
+
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      key="${family}:${index}"
+      tag="$(warp_profile_tag "$family" "$index")"
+      WARP_PROFILE_PATHS[$key]="$(warp_profile_path_for "$flavor" "$tag")"
+      WARP_SINGBOX_PATHS[$key]="$(warp_singbox_path_for "$flavor" "$tag")"
+    done
+  done
 }
 
 load_warp_profile_state() {
   local flavor="${1:-$CURRENT_WARP_FLAVOR}"
-  local value
+  local family index key profile singbox reserved value
 
   set_warp_profile_paths "$flavor"
-  for value in "$WARP4_1_PROFILE" "$WARP4_2_PROFILE" "$WARP6_1_PROFILE" "$WARP6_2_PROFILE"; do
-    [[ -f "$value" ]] || return 1
+
+  WARP_KEYS=()
+  WARP_ADDRS=()
+  WARP_PEERS=()
+  WARP_ENDPOINTS=()
+  WARP_PORTS=()
+  WARP_RESERVED=()
+
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      key="${family}:${index}"
+      profile="${WARP_PROFILE_PATHS[$key]}"
+      [[ -f "$profile" ]] || return 1
+
+      WARP_KEYS[$key]="$(profile_value "$profile" "PrivateKey")"
+      if [[ "$family" == "4" ]]; then
+        WARP_ADDRS[$key]="$(profile_address_v4 "$profile")"
+      else
+        WARP_ADDRS[$key]="$(profile_address_v6 "$profile")"
+      fi
+      WARP_PEERS[$key]="$(profile_value "$profile" "PublicKey")"
+      WARP_ENDPOINTS[$key]="$(profile_endpoint_host "$profile")"
+      WARP_PORTS[$key]="$(profile_endpoint_port "$profile")"
+      WARP_RESERVED[$key]="[0, 0, 0]"
+
+      if [[ "$flavor" == "warp-yg" || "$flavor" == "warp-go" ]]; then
+        singbox="${WARP_SINGBOX_PATHS[$key]}"
+        [[ -f "$singbox" ]] || return 1
+        reserved="$(json_reserved "$singbox")"
+        [[ -n "$reserved" ]] || reserved="[0, 0, 0]"
+        WARP_RESERVED[$key]="$reserved"
+      fi
+
+      for value in "${WARP_KEYS[$key]}" "${WARP_ADDRS[$key]}" "${WARP_PEERS[$key]}"; do
+        [[ -n "$value" ]] || return 1
+      done
+    done
   done
+}
 
-  WARP4_1_KEY="$(profile_value "$WARP4_1_PROFILE" "PrivateKey")"
-  WARP4_2_KEY="$(profile_value "$WARP4_2_PROFILE" "PrivateKey")"
-  WARP6_1_KEY="$(profile_value "$WARP6_1_PROFILE" "PrivateKey")"
-  WARP6_2_KEY="$(profile_value "$WARP6_2_PROFILE" "PrivateKey")"
+all_warp_tags() {
+  local family index
 
-  WARP4_1_ADDR="$(profile_address_v4 "$WARP4_1_PROFILE")"
-  WARP4_2_ADDR="$(profile_address_v4 "$WARP4_2_PROFILE")"
-  WARP6_1_ADDR="$(profile_address_v6 "$WARP6_1_PROFILE")"
-  WARP6_2_ADDR="$(profile_address_v6 "$WARP6_2_PROFILE")"
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      warp_profile_tag "$family" "$index"
+      echo
+    done
+  done
+}
 
-  WARP4_1_PEER="$(profile_value "$WARP4_1_PROFILE" "PublicKey")"
-  WARP4_2_PEER="$(profile_value "$WARP4_2_PROFILE" "PublicKey")"
-  WARP6_1_PEER="$(profile_value "$WARP6_1_PROFILE" "PublicKey")"
-  WARP6_2_PEER="$(profile_value "$WARP6_2_PROFILE" "PublicKey")"
+missing_warp_tags() {
+  local family index key tag profile singbox
 
-  WARP4_1_ENDPOINT="$(profile_endpoint_host "$WARP4_1_PROFILE")"
-  WARP4_2_ENDPOINT="$(profile_endpoint_host "$WARP4_2_PROFILE")"
-  WARP6_1_ENDPOINT="$(profile_endpoint_host "$WARP6_1_PROFILE")"
-  WARP6_2_ENDPOINT="$(profile_endpoint_host "$WARP6_2_PROFILE")"
+  set_warp_profile_paths "$CURRENT_WARP_FLAVOR"
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      key="${family}:${index}"
+      tag="$(warp_profile_tag "$family" "$index")"
+      profile="${WARP_PROFILE_PATHS[$key]}"
+      singbox="${WARP_SINGBOX_PATHS[$key]}"
 
-  WARP4_1_PORT="$(profile_endpoint_port "$WARP4_1_PROFILE")"
-  WARP4_2_PORT="$(profile_endpoint_port "$WARP4_2_PROFILE")"
-  WARP6_1_PORT="$(profile_endpoint_port "$WARP6_1_PROFILE")"
-  WARP6_2_PORT="$(profile_endpoint_port "$WARP6_2_PROFILE")"
+      if [[ ! -f "$profile" ]]; then
+        printf '%s\n' "$tag"
+      elif [[ "$CURRENT_WARP_FLAVOR" != "wgcf" && ! -f "$singbox" ]]; then
+        printf '%s\n' "$tag"
+      fi
+    done
+  done
+}
 
-  WARP4_1_RESERVED="0, 0, 0"
-  WARP4_2_RESERVED="0, 0, 0"
-  WARP6_1_RESERVED="0, 0, 0"
-  WARP6_2_RESERVED="0, 0, 0"
+ensure_warp_profile_state() {
+  local -a tags
 
-  if [[ "$flavor" == "warp-yg" || "$flavor" == "warp-go" ]]; then
-    WARP4_1_RESERVED="$(json_reserved "$WARP4_1_SINGBOX")"
-    WARP4_2_RESERVED="$(json_reserved "$WARP4_2_SINGBOX")"
-    WARP6_1_RESERVED="$(json_reserved "$WARP6_1_SINGBOX")"
-    WARP6_2_RESERVED="$(json_reserved "$WARP6_2_SINGBOX")"
-
-    [[ -n "$WARP4_1_RESERVED" ]] || WARP4_1_RESERVED="0, 0, 0"
-    [[ -n "$WARP4_2_RESERVED" ]] || WARP4_2_RESERVED="0, 0, 0"
-    [[ -n "$WARP6_1_RESERVED" ]] || WARP6_1_RESERVED="0, 0, 0"
-    [[ -n "$WARP6_2_RESERVED" ]] || WARP6_2_RESERVED="0, 0, 0"
+  if load_warp_profile_state "$CURRENT_WARP_FLAVOR"; then
+    return 0
   fi
 
-  for value in WARP4_1_KEY WARP4_2_KEY WARP6_1_KEY WARP6_2_KEY WARP4_1_ADDR WARP4_2_ADDR WARP6_1_ADDR WARP6_2_ADDR WARP4_1_PEER WARP4_2_PEER WARP6_1_PEER WARP6_2_PEER; do
-    [[ -n "${!value}" ]] || return 1
-  done
+  mapfile -t tags < <(missing_warp_tags)
+  if ((${#tags[@]} > 0)); then
+    echo "Missing WARP profiles for ${#tags[@]} profile(s); generating them now..."
+    regenerate_warp_tags "${tags[@]}"
+    load_warp_profile_state "$CURRENT_WARP_FLAVOR" || die "Failed to load generated WARP profiles"
+    return 0
+  fi
+
+  die "Generated WARP profiles are incomplete; choose menu option 2 to regenerate all WARP profiles"
 }
 
 clear_warp_profile() {
@@ -866,23 +1268,17 @@ regenerate_warp_tags() {
     clear_warp_profile "$tag"
     make_warp_profile "$tag"
   done
-
-  load_warp_profile_state "$CURRENT_WARP_FLAVOR" || die "Failed to load generated WARP profiles"
 }
 
 render_warp_endpoint() {
   local family="$1"
   local index="$2"
-  local base tag addr key peer endpoint port reserved allowed_ips resolver bind_address bind_key
+  local map_key tag allowed_ips resolver bind_address bind_key endpoint port
 
-  base="WARP${family}_${index}"
+  map_key="${family}:${index}"
   tag="warp-v${family}-${index}"
-  addr="${base}_ADDR"
-  key="${base}_KEY"
-  peer="${base}_PEER"
-  endpoint="${base}_ENDPOINT"
-  port="${base}_PORT"
-  reserved="${base}_RESERVED"
+  endpoint="${WARP_ENDPOINTS[$map_key]:-engage.cloudflareclient.com}"
+  port="${WARP_PORTS[$map_key]:-2408}"
 
   if [[ "$family" == "4" ]]; then
     allowed_ips="0.0.0.0/0"
@@ -902,15 +1298,15 @@ render_warp_endpoint() {
       "tag": "$tag",
       "mtu": 1280,
       "address": [
-        "${!addr}"
+        "${WARP_ADDRS[$map_key]}"
       ],
-      "private_key": "${!key}",
+      "private_key": "${WARP_KEYS[$map_key]}",
       "peers": [
         {
-          "address": "${!endpoint:-engage.cloudflareclient.com}",
-          "port": ${!port:-2408},
-          "public_key": "${!peer}",
-          "reserved": [${!reserved}],
+          "address": "$endpoint",
+          "port": $port,
+          "public_key": "${WARP_PEERS[$map_key]}",
+          "reserved": ${WARP_RESERVED[$map_key]},
           "allowed_ips": [
             "$allowed_ips"
           ]
@@ -931,7 +1327,7 @@ render_warp_endpoints() {
 
   first=true
   for family in 4 6; do
-    for index in 1 2; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
       if [[ "$first" == "true" ]]; then
         first=false
       else
@@ -948,7 +1344,7 @@ render_hysteria_users() {
   first=true
   for family in 4 6; do
     for kind in direct warp; do
-      for index in 1 2; do
+      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
         user_name="${kind}-v${family}-${index}"
         password="$(json_escape "$(user_password "$user_name")")"
         if [[ "$first" == "true" ]]; then
@@ -972,7 +1368,7 @@ render_direct_outbounds() {
 
   first=true
   for family in 4 6; do
-    for index in 1 2; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
       tag="direct-v${family}-${index}"
       if [[ "$family" == "4" ]]; then
         resolver="ipv4_only"
@@ -1011,7 +1407,7 @@ render_auth_user_array() {
   family="$1"
   first=true
   for kind in direct warp; do
-    for index in 1 2; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
       user_name="${kind}-v${family}-${index}"
       if [[ "$first" == "true" ]]; then
         first=false
@@ -1030,7 +1426,7 @@ render_user_outbound_rules() {
   first=true
   for family in 4 6; do
     for kind in direct warp; do
-      for index in 1 2; do
+      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
         user_name="${kind}-v${family}-${index}"
         if [[ "$first" == "true" ]]; then
           first=false
@@ -1086,7 +1482,7 @@ write_singbox_config() {
   local domain_v4_json domain_v6_json acme_email_json cf_token_json backup_path
   local endpoints_json users_json outbounds_json route_rules_json
 
-  load_warp_profile_state "$CURRENT_WARP_FLAVOR" || die "Generated WARP profiles are missing; choose menu option 2 first"
+  ensure_warp_profile_state
   load_egress_bindings
 
   domain_v4_json="$(json_escape "$DOMAIN_V4")"
@@ -1191,7 +1587,7 @@ print_proxy_information() {
     fi
     for family in 4 6; do
       for kind in direct warp; do
-        for index in 1 2; do
+        for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
           user_name="${kind}-v${family}-${index}"
           password="$(user_password "$user_name")"
           printf -v display_index '%02d' "$index"
@@ -1203,6 +1599,39 @@ print_proxy_information() {
   echo
 }
 
+regenerate_all_warp_profiles() {
+  local -a tags
+
+  mapfile -t tags < <(all_warp_tags)
+  regenerate_warp_tags "${tags[@]}"
+}
+
+prepare_new_config_inputs() {
+  local existing_interface_count default_domain_v4 default_domain_v6 default_interface_count
+
+  existing_interface_count="$(config_interface_count)"
+  default_domain_v4="${DOMAIN_V4:-xxx.com}"
+  default_domain_v6="${DOMAIN_V6:-xxx-v6.com}"
+  default_interface_count="${WARP_INTERFACE_COUNT:-${existing_interface_count:-2}}"
+
+  prompt DOMAIN_V4 "IPv4/SNI domain" "$default_domain_v4"
+  prompt DOMAIN_V6 "IPv6/SNI domain" "$default_domain_v6"
+  prompt ACME_EMAIL "ACME email" "$ACME_EMAIL"
+  prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$CF_TOKEN" true
+  prompt WARP_INTERFACE_COUNT "How many WARP slots" "$default_interface_count"
+  validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP interface count"
+  configure_egress_interfaces true
+}
+
+generate_new_config() {
+  prepare_new_config_inputs
+  load_passwords_from_config
+  regenerate_passwords
+  regenerate_all_warp_profiles
+  write_singbox_config
+  echo "New config generated."
+}
+
 change_sni() {
   prompt DOMAIN_V4 "IPv4/SNI domain" "$DOMAIN_V4"
   prompt DOMAIN_V6 "IPv6/SNI domain" "$DOMAIN_V6"
@@ -1211,31 +1640,55 @@ change_sni() {
 }
 
 regenerate_selected_warp_menu() {
-  local choice
+  local choice option selected_tag ipv4_choice ipv6_choice all_choice family index
+  local -a ipv4_tags ipv6_tags all_tags
 
   echo
   echo "Select WARP profile to regenerate:"
-  echo "1. warp-v4-1"
-  echo "2. warp-v4-2"
-  echo "3. warp-v6-1"
-  echo "4. warp-v6-2"
-  echo "5. all IPv4 WARP"
-  echo "6. all IPv6 WARP"
-  echo "7. all WARP"
+  option=1
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      echo "$option. warp-v${family}-${index}"
+      ((option++))
+    done
+  done
+  ipv4_choice=$option
+  echo "$ipv4_choice. all IPv4 WARP"
+  ((option++))
+  ipv6_choice=$option
+  echo "$ipv6_choice. all IPv6 WARP"
+  ((option++))
+  all_choice=$option
+  echo "$all_choice. all WARP"
   echo "0. back"
   read -r -p "Choice: " choice
 
-  case "$choice" in
-    1) regenerate_warp_tags "$(warp_profile_tag 4 1)" ;;
-    2) regenerate_warp_tags "$(warp_profile_tag 4 2)" ;;
-    3) regenerate_warp_tags "$(warp_profile_tag 6 1)" ;;
-    4) regenerate_warp_tags "$(warp_profile_tag 6 2)" ;;
-    5) regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" ;;
-    6) regenerate_warp_tags "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)" ;;
-    7) regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)" ;;
-    0) return 0 ;;
-    *) echo "Invalid choice"; return 0 ;;
-  esac
+  if [[ "$choice" == "0" ]]; then
+    return 0
+  elif [[ "$choice" == "$ipv4_choice" ]]; then
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      ipv4_tags+=("$(warp_profile_tag 4 "$index")")
+    done
+    regenerate_warp_tags "${ipv4_tags[@]}"
+  elif [[ "$choice" == "$ipv6_choice" ]]; then
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      ipv6_tags+=("$(warp_profile_tag 6 "$index")")
+    done
+    regenerate_warp_tags "${ipv6_tags[@]}"
+  elif [[ "$choice" == "$all_choice" ]]; then
+    mapfile -t all_tags < <(all_warp_tags)
+    regenerate_warp_tags "${all_tags[@]}"
+  elif [[ "$choice" =~ ^[1-9][0-9]*$ && "$choice" -lt "$ipv4_choice" ]]; then
+    if ((choice <= WARP_INTERFACE_COUNT)); then
+      selected_tag="$(warp_profile_tag 4 "$choice")"
+    else
+      selected_tag="$(warp_profile_tag 6 "$((choice - WARP_INTERFACE_COUNT))")"
+    fi
+    regenerate_warp_tags "$selected_tag"
+  else
+    echo "Invalid choice"
+    return 0
+  fi
 
   write_singbox_config
   echo "Selected WARP profile(s) regenerated."
@@ -1249,12 +1702,15 @@ main_menu() {
     echo "==== Sing-box HY2 + WARP Menu ===="
     echo "Current IPv4/SNI: $DOMAIN_V4"
     echo "Current IPv6/SNI: $DOMAIN_V6"
+    echo "Current WARP slots: $WARP_INTERFACE_COUNT"
     echo "Current WARP mode: $CURRENT_WARP_FLAVOR"
     echo "1. 重新生成密碼"
     echo "2. 重新生成所有 WARP"
     echo "3. 重新生成指定的 WARP"
     echo "4. 改變 SNI"
     echo "5. 輸出 proxy information"
+    echo "6. 生成新的 config"
+    echo "7. 寫入 secondary VNIC netplan"
     echo "0. 退出"
     read -r -p "Choice: " choice
 
@@ -1265,7 +1721,7 @@ main_menu() {
         echo "Passwords regenerated."
         ;;
       2)
-        regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)"
+        regenerate_all_warp_profiles
         write_singbox_config
         echo "All WARP profiles regenerated."
         ;;
@@ -1278,6 +1734,12 @@ main_menu() {
       5)
         print_proxy_information
         ;;
+      6)
+        generate_new_config
+        ;;
+      7)
+        write_secondary_vnic_netplan
+        ;;
       0)
         exit 0
         ;;
@@ -1289,12 +1751,13 @@ main_menu() {
 }
 
 load_initial_state() {
-  local existing_domain_v4 existing_domain_v6 existing_email existing_token
+  local existing_domain_v4 existing_domain_v6 existing_email existing_token existing_interface_count
 
   existing_domain_v4="$(config_json_value "server_name")"
   existing_domain_v6="$(config_acme_domain 2)"
   existing_email="$(config_json_value "email")"
   existing_token="$(config_json_value "api_token")"
+  existing_interface_count="$(config_interface_count)"
 
   DOMAIN_V4="$existing_domain_v4"
   DOMAIN_V6="$existing_domain_v6"
@@ -1305,6 +1768,9 @@ load_initial_state() {
   [[ -n "$DOMAIN_V6" ]] || prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
   [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
   [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
+  [[ -n "$WARP_INTERFACE_COUNT" ]] || prompt WARP_INTERFACE_COUNT "How many WARP slots" "${existing_interface_count:-2}"
+  validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP interface count"
+  configure_egress_interfaces
 
   load_passwords_from_config
   CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
@@ -1312,7 +1778,7 @@ load_initial_state() {
   if load_warp_profile_state "$CURRENT_WARP_FLAVOR"; then
     echo "Loaded existing WARP profiles from $CURRENT_WARP_FLAVOR."
   else
-    echo "WARNING: No complete generated WARP profile set found. Use menu option 2 before writing config."
+    echo "WARNING: No complete generated WARP profile set found. Use menu option 2 to regenerate WARP or option 6 to generate a new config."
   fi
 }
 
