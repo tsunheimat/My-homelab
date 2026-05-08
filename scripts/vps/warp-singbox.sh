@@ -278,6 +278,35 @@ validate_netplan_interface_name() {
   [[ "$interface" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "Invalid interface name for netplan: $interface"
 }
 
+interface_name_from_link_index() {
+  local link_index="$1"
+
+  ip -o link show | awk -F': ' -v link_index="$link_index" '
+    $1 == link_index {
+      split($2, name, "@")
+      print name[1]
+      exit
+    }
+  '
+}
+
+normalize_interface_name() {
+  local interface="$1"
+  local resolved_interface
+
+  validate_netplan_interface_name "$interface"
+
+  if [[ "$interface" =~ ^[0-9]+$ ]]; then
+    resolved_interface="$(interface_name_from_link_index "$interface")"
+    [[ -n "$resolved_interface" ]] || die "Network interface index does not exist: $interface"
+  else
+    resolved_interface="$interface"
+  fi
+
+  ip link show dev "$resolved_interface" >/dev/null 2>&1 || die "Network interface does not exist: $resolved_interface"
+  printf '%s' "$resolved_interface"
+}
+
 secondary_vnic_ipv4_source() {
   local index="$1"
   local interface="$2"
@@ -380,7 +409,7 @@ secondary_vnic_entry_yaml() {
     prompt "$prompt_var" "Secondary VNIC interface $index" "$(secondary_vnic_defaults "$index")"
     interface="${!prompt_var}"
   fi
-  validate_netplan_interface_name "$interface"
+  interface="$(normalize_interface_name "$interface")"
 
   ipv4_source="$(secondary_vnic_ipv4_source "$index" "$interface")"
   if [[ -z "$ipv4_source" ]]; then
@@ -435,6 +464,7 @@ write_secondary_vnic_netplan() {
   validate_positive_integer "$SECONDARY_VNIC_TABLE_BASE" "SECONDARY_VNIC_TABLE_BASE"
   validate_positive_integer "$SECONDARY_VNIC_PRIORITY_BASE" "SECONDARY_VNIC_PRIORITY_BASE"
 
+  load_egress_bindings
   mapfile -t unique_indexes < <(unique_secondary_egress_indexes)
   entries=""
   for index in "${unique_indexes[@]}"; do
@@ -479,6 +509,7 @@ load_egress_bindings() {
       iface="${!previous_iface-}"
     fi
     [[ -n "$iface" ]] || die "$iface_var is required"
+    iface="$(normalize_interface_name "$iface")"
     printf -v "$iface_var" '%s' "$iface"
 
     v4_addr="${!v4_var-}"
@@ -513,10 +544,11 @@ configure_egress_interfaces() {
       default_value="${!previous_iface_var-}"
     fi
     if [[ -n "$default_value" ]]; then
-      prompt "$iface_var" "Egress interface for WARP slot $index (repeat allowed)" "$default_value"
+      prompt "$iface_var" "Egress interface name/index for WARP slot $index (repeat allowed)" "$default_value"
     else
-      prompt "$iface_var" "Egress interface for WARP slot $index (repeat allowed)"
+      prompt "$iface_var" "Egress interface name/index for WARP slot $index (repeat allowed)"
     fi
+    printf -v "$iface_var" '%s' "$(normalize_interface_name "${!iface_var}")"
   done
 }
 
