@@ -13,7 +13,14 @@ WARP_YG_ACCOUNT_SOURCE="${WARP_YG_ACCOUNT_SOURCE:-auto}"
 WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
-WARP_YG_ZEROTEAM_FAILED=false
+WARP_YG_FAIL_MARKER=""
+EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-enp0s6}"
+EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-enp1s0}"
+
+declare -A USER_PASSWORDS
+declare -A EGRESS_IFACES
+declare -A EGRESS_V4_ADDRS
+declare -A EGRESS_V6_ADDRS
 
 die() {
   echo "ERROR: $*" >&2
@@ -104,6 +111,67 @@ config_user_password() {
       exit
     }
   ' "$CONFIG_PATH"
+}
+
+legacy_user_name() {
+  local user_name="$1"
+
+  case "$user_name" in
+    direct-v4-1) printf 'ipv4-1' ;;
+    warp-v4-1) printf 'ipv4-2' ;;
+    warp-v4-2) printf 'ipv4-3' ;;
+    direct-v6-1) printf 'ipv6-1' ;;
+    warp-v6-1) printf 'ipv6-2' ;;
+    warp-v6-2) printf 'ipv6-3' ;;
+  esac
+}
+
+user_password() {
+  local user_name="$1"
+  printf '%s' "${USER_PASSWORDS[$user_name]}"
+}
+
+warp_profile_tag() {
+  local family="$1"
+  local index="$2"
+
+  printf 'warp-ipv%s-%s' "$family" "$index"
+}
+
+interface_address() {
+  local family="$1"
+  local interface="$2"
+
+  if [[ "$family" == "4" ]]; then
+    ip -o -4 addr show dev "$interface" scope global | awk 'NR == 1 { split($4, a, "/"); print a[1]; exit }'
+  else
+    ip -o -6 addr show dev "$interface" scope global | awk 'NR == 1 { split($4, a, "/"); print a[1]; exit }'
+  fi
+}
+
+load_egress_bindings() {
+  local index iface_var v4_var v6_var iface v4_addr v6_addr
+
+  for index in 1 2; do
+    iface_var="EGRESS_${index}_INTERFACE"
+    v4_var="EGRESS_${index}_IPV4"
+    v6_var="EGRESS_${index}_IPV6"
+
+    iface="${!iface_var-}"
+    [[ -n "$iface" ]] || die "$iface_var is required"
+
+    v4_addr="${!v4_var-}"
+    [[ -n "$v4_addr" ]] || v4_addr="$(interface_address 4 "$iface")"
+    [[ -n "$v4_addr" ]] || die "Could not detect IPv4 address for $iface; set $v4_var"
+
+    v6_addr="${!v6_var-}"
+    [[ -n "$v6_addr" ]] || v6_addr="$(interface_address 6 "$iface")"
+    [[ -n "$v6_addr" ]] || die "Could not detect IPv6 address for $iface; set $v6_var"
+
+    EGRESS_IFACES[$index]="$iface"
+    EGRESS_V4_ADDRS[$index]="$v4_addr"
+    EGRESS_V6_ADDRS[$index]="$v6_addr"
+  done
 }
 
 prompt_keep_existing() {
@@ -355,7 +423,7 @@ write_warp_yg_conf() {
     *) die "Unsupported WARP_YG_ACCOUNT_SOURCE: $WARP_YG_ACCOUNT_SOURCE" ;;
   esac
 
-  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "warpapi" || "$WARP_YG_ZEROTEAM_FAILED" == "true" ]]; then
+  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "warpapi" || -f "$WARP_YG_FAIL_MARKER" ]]; then
     write_warp_yg_fallback_conf "$output_path"
     return 0
   fi
@@ -365,7 +433,7 @@ write_warp_yg_conf() {
   fi
 
   rm -f "$output_path"
-  WARP_YG_ZEROTEAM_FAILED=true
+  touch "$WARP_YG_FAIL_MARKER"
 
   if [[ "$WARP_YG_ACCOUNT_SOURCE" == "zeroteam" ]]; then
     die "warp-yg zeroteam account API failed"
@@ -576,131 +644,469 @@ make_warp_profile() {
   fi
 }
 
-need_cmd awk
-need_cmd cp
-need_cmd grep
-need_cmd mkdir
-need_cmd openssl
-need_cmd sing-box
-need_cmd systemctl
-need_cmd tr
+config_acme_domain() {
+  local index="$1"
 
-ensure_warp_tools
-detect_warp_tool
-if [[ "$WARP_TOOL" == "warp-yg" ]]; then
-  ensure_warp_yg_repo
-fi
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk -v target="$index" '
+    /"domain"[[:space:]]*:[[:space:]]*\[/ {
+      in_domain = 1
+      count = 0
+      next
+    }
+    in_domain && /"/ {
+      line = $0
+      sub(/^[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      if (line != "") {
+        count++
+        if (count == target) {
+          print line
+          exit
+        }
+      }
+    }
+    in_domain && /\]/ {
+      in_domain = 0
+    }
+  ' "$CONFIG_PATH"
+}
 
-EXISTING_ACME_EMAIL="$(config_json_value "email")"
-EXISTING_CF_TOKEN="$(config_json_value "api_token")"
+require_base_commands() {
+  need_cmd awk
+  need_cmd cp
+  need_cmd grep
+  need_cmd ip
+  need_cmd mkdir
+  need_cmd mktemp
+  need_cmd openssl
+  need_cmd sing-box
+  need_cmd systemctl
+  need_cmd tr
+}
 
-prompt DOMAIN_V4 "IPv4/SNI domain" "xxx.com"
-prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
-prompt_keep_existing ACME_EMAIL "ACME email" "$EXISTING_ACME_EMAIL"
-prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$EXISTING_CF_TOKEN" true
+init_runtime() {
+  WARP_YG_FAIL_MARKER="$(mktemp /tmp/warp-yg-zeroteam.XXXXXX)"
+  rm -f "$WARP_YG_FAIL_MARKER"
+  trap 'rm -f "$WARP_YG_FAIL_MARKER"' EXIT
+}
 
-echo "Generating HY2 passwords..."
-PASS_IPV4_1="$(existing_or_rand_password "$(config_user_password "ipv4-1")")"
-PASS_IPV4_2="$(existing_or_rand_password "$(config_user_password "ipv4-2")")"
-PASS_IPV4_3="$(existing_or_rand_password "$(config_user_password "ipv4-3")")"
-PASS_IPV6_1="$(existing_or_rand_password "$(config_user_password "ipv6-1")")"
-PASS_IPV6_2="$(existing_or_rand_password "$(config_user_password "ipv6-2")")"
-PASS_IPV6_3="$(existing_or_rand_password "$(config_user_password "ipv6-3")")"
+load_passwords_from_config() {
+  local family kind index user_name existing legacy
 
-echo "Generating four separate WARP profiles with $WARP_TOOL..."
-for tag in warp-ipv4-1 warp-ipv4-2 warp-ipv6-1 warp-ipv6-2; do
-  make_warp_profile "$tag"
-done
+  for family in 4 6; do
+    for kind in direct warp; do
+      for index in 1 2; do
+        user_name="${kind}-v${family}-${index}"
+        existing="$(config_user_password "$user_name")"
+        if [[ -z "$existing" ]]; then
+          legacy="$(legacy_user_name "$user_name")"
+          [[ -z "$legacy" ]] || existing="$(config_user_password "$legacy")"
+        fi
+        USER_PASSWORDS[$user_name]="$(existing_or_rand_password "$existing")"
+      done
+    done
+  done
+}
 
-if [[ "$WARP_TOOL" == "warp-yg" ]]; then
-  WARP4_1_PROFILE="$WARP_YG_BASE/warp-ipv4-1/warp-yg-profile.conf"
-  WARP4_2_PROFILE="$WARP_YG_BASE/warp-ipv4-2/warp-yg-profile.conf"
-  WARP6_1_PROFILE="$WARP_YG_BASE/warp-ipv6-1/warp-yg-profile.conf"
-  WARP6_2_PROFILE="$WARP_YG_BASE/warp-ipv6-2/warp-yg-profile.conf"
-  WARP4_1_SINGBOX="$WARP_YG_BASE/warp-ipv4-1/warp-yg-singbox.json"
-  WARP4_2_SINGBOX="$WARP_YG_BASE/warp-ipv4-2/warp-yg-singbox.json"
-  WARP6_1_SINGBOX="$WARP_YG_BASE/warp-ipv6-1/warp-yg-singbox.json"
-  WARP6_2_SINGBOX="$WARP_YG_BASE/warp-ipv6-2/warp-yg-singbox.json"
-elif [[ "$WARP_TOOL" == "warp-go" ]]; then
-  WARP4_1_PROFILE="$WARP_GO_BASE/warp-ipv4-1/warp-go-profile.conf"
-  WARP4_2_PROFILE="$WARP_GO_BASE/warp-ipv4-2/warp-go-profile.conf"
-  WARP6_1_PROFILE="$WARP_GO_BASE/warp-ipv6-1/warp-go-profile.conf"
-  WARP6_2_PROFILE="$WARP_GO_BASE/warp-ipv6-2/warp-go-profile.conf"
-  WARP4_1_SINGBOX="$WARP_GO_BASE/warp-ipv4-1/warp-go-singbox.json"
-  WARP4_2_SINGBOX="$WARP_GO_BASE/warp-ipv4-2/warp-go-singbox.json"
-  WARP6_1_SINGBOX="$WARP_GO_BASE/warp-ipv6-1/warp-go-singbox.json"
-  WARP6_2_SINGBOX="$WARP_GO_BASE/warp-ipv6-2/warp-go-singbox.json"
-else
-  WARP4_1_PROFILE="$WGCF_BASE/warp-ipv4-1/wgcf-profile.conf"
-  WARP4_2_PROFILE="$WGCF_BASE/warp-ipv4-2/wgcf-profile.conf"
-  WARP6_1_PROFILE="$WGCF_BASE/warp-ipv6-1/wgcf-profile.conf"
-  WARP6_2_PROFILE="$WGCF_BASE/warp-ipv6-2/wgcf-profile.conf"
-  WARP4_1_SINGBOX=""
-  WARP4_2_SINGBOX=""
-  WARP6_1_SINGBOX=""
-  WARP6_2_SINGBOX=""
-fi
+regenerate_passwords() {
+  local family kind index user_name
 
-WARP4_1_KEY="$(profile_value "$WARP4_1_PROFILE" "PrivateKey")"
-WARP4_2_KEY="$(profile_value "$WARP4_2_PROFILE" "PrivateKey")"
-WARP6_1_KEY="$(profile_value "$WARP6_1_PROFILE" "PrivateKey")"
-WARP6_2_KEY="$(profile_value "$WARP6_2_PROFILE" "PrivateKey")"
+  for family in 4 6; do
+    for kind in direct warp; do
+      for index in 1 2; do
+        user_name="${kind}-v${family}-${index}"
+        USER_PASSWORDS[$user_name]="$(rand_password)"
+      done
+    done
+  done
+}
 
-WARP4_1_ADDR="$(profile_address_v4 "$WARP4_1_PROFILE")"
-WARP4_2_ADDR="$(profile_address_v4 "$WARP4_2_PROFILE")"
-WARP6_1_ADDR="$(profile_address_v6 "$WARP6_1_PROFILE")"
-WARP6_2_ADDR="$(profile_address_v6 "$WARP6_2_PROFILE")"
+detect_existing_warp_flavor() {
+  if [[ -f "$WARP_YG_BASE/warp-ipv4-1/warp-yg-profile.conf" && -f "$WARP_YG_BASE/warp-ipv6-1/warp-yg-profile.conf" ]]; then
+    printf 'warp-yg'
+  elif [[ -f "$WARP_GO_BASE/warp-ipv4-1/warp-go-profile.conf" && -f "$WARP_GO_BASE/warp-ipv6-1/warp-go-profile.conf" ]]; then
+    printf 'warp-go'
+  elif [[ -f "$WGCF_BASE/warp-ipv4-1/wgcf-profile.conf" && -f "$WGCF_BASE/warp-ipv6-1/wgcf-profile.conf" ]]; then
+    printf 'wgcf'
+  else
+    printf '%s' "$WARP_TOOL"
+  fi
+}
 
-WARP4_1_PEER="$(profile_value "$WARP4_1_PROFILE" "PublicKey")"
-WARP4_2_PEER="$(profile_value "$WARP4_2_PROFILE" "PublicKey")"
-WARP6_1_PEER="$(profile_value "$WARP6_1_PROFILE" "PublicKey")"
-WARP6_2_PEER="$(profile_value "$WARP6_2_PROFILE" "PublicKey")"
+set_warp_profile_paths() {
+  local flavor="$1"
 
-WARP4_1_ENDPOINT="$(profile_endpoint_host "$WARP4_1_PROFILE")"
-WARP4_2_ENDPOINT="$(profile_endpoint_host "$WARP4_2_PROFILE")"
-WARP6_1_ENDPOINT="$(profile_endpoint_host "$WARP6_1_PROFILE")"
-WARP6_2_ENDPOINT="$(profile_endpoint_host "$WARP6_2_PROFILE")"
+  case "$flavor" in
+    warp-yg)
+      WARP4_1_PROFILE="$WARP_YG_BASE/warp-ipv4-1/warp-yg-profile.conf"
+      WARP4_2_PROFILE="$WARP_YG_BASE/warp-ipv4-2/warp-yg-profile.conf"
+      WARP6_1_PROFILE="$WARP_YG_BASE/warp-ipv6-1/warp-yg-profile.conf"
+      WARP6_2_PROFILE="$WARP_YG_BASE/warp-ipv6-2/warp-yg-profile.conf"
+      WARP4_1_SINGBOX="$WARP_YG_BASE/warp-ipv4-1/warp-yg-singbox.json"
+      WARP4_2_SINGBOX="$WARP_YG_BASE/warp-ipv4-2/warp-yg-singbox.json"
+      WARP6_1_SINGBOX="$WARP_YG_BASE/warp-ipv6-1/warp-yg-singbox.json"
+      WARP6_2_SINGBOX="$WARP_YG_BASE/warp-ipv6-2/warp-yg-singbox.json"
+      ;;
+    warp-go)
+      WARP4_1_PROFILE="$WARP_GO_BASE/warp-ipv4-1/warp-go-profile.conf"
+      WARP4_2_PROFILE="$WARP_GO_BASE/warp-ipv4-2/warp-go-profile.conf"
+      WARP6_1_PROFILE="$WARP_GO_BASE/warp-ipv6-1/warp-go-profile.conf"
+      WARP6_2_PROFILE="$WARP_GO_BASE/warp-ipv6-2/warp-go-profile.conf"
+      WARP4_1_SINGBOX="$WARP_GO_BASE/warp-ipv4-1/warp-go-singbox.json"
+      WARP4_2_SINGBOX="$WARP_GO_BASE/warp-ipv4-2/warp-go-singbox.json"
+      WARP6_1_SINGBOX="$WARP_GO_BASE/warp-ipv6-1/warp-go-singbox.json"
+      WARP6_2_SINGBOX="$WARP_GO_BASE/warp-ipv6-2/warp-go-singbox.json"
+      ;;
+    wgcf)
+      WARP4_1_PROFILE="$WGCF_BASE/warp-ipv4-1/wgcf-profile.conf"
+      WARP4_2_PROFILE="$WGCF_BASE/warp-ipv4-2/wgcf-profile.conf"
+      WARP6_1_PROFILE="$WGCF_BASE/warp-ipv6-1/wgcf-profile.conf"
+      WARP6_2_PROFILE="$WGCF_BASE/warp-ipv6-2/wgcf-profile.conf"
+      WARP4_1_SINGBOX=""
+      WARP4_2_SINGBOX=""
+      WARP6_1_SINGBOX=""
+      WARP6_2_SINGBOX=""
+      ;;
+    *)
+      die "Unsupported WARP flavor: $flavor"
+      ;;
+  esac
+}
 
-WARP4_1_PORT="$(profile_endpoint_port "$WARP4_1_PROFILE")"
-WARP4_2_PORT="$(profile_endpoint_port "$WARP4_2_PROFILE")"
-WARP6_1_PORT="$(profile_endpoint_port "$WARP6_1_PROFILE")"
-WARP6_2_PORT="$(profile_endpoint_port "$WARP6_2_PROFILE")"
+load_warp_profile_state() {
+  local flavor="${1:-$CURRENT_WARP_FLAVOR}"
+  local value
 
-WARP4_1_RESERVED="0, 0, 0"
-WARP4_2_RESERVED="0, 0, 0"
-WARP6_1_RESERVED="0, 0, 0"
-WARP6_2_RESERVED="0, 0, 0"
+  set_warp_profile_paths "$flavor"
+  for value in "$WARP4_1_PROFILE" "$WARP4_2_PROFILE" "$WARP6_1_PROFILE" "$WARP6_2_PROFILE"; do
+    [[ -f "$value" ]] || return 1
+  done
 
-if [[ "$WARP_TOOL" == "warp-yg" || "$WARP_TOOL" == "warp-go" ]]; then
-  WARP4_1_RESERVED="$(json_reserved "$WARP4_1_SINGBOX")"
-  WARP4_2_RESERVED="$(json_reserved "$WARP4_2_SINGBOX")"
-  WARP6_1_RESERVED="$(json_reserved "$WARP6_1_SINGBOX")"
-  WARP6_2_RESERVED="$(json_reserved "$WARP6_2_SINGBOX")"
+  WARP4_1_KEY="$(profile_value "$WARP4_1_PROFILE" "PrivateKey")"
+  WARP4_2_KEY="$(profile_value "$WARP4_2_PROFILE" "PrivateKey")"
+  WARP6_1_KEY="$(profile_value "$WARP6_1_PROFILE" "PrivateKey")"
+  WARP6_2_KEY="$(profile_value "$WARP6_2_PROFILE" "PrivateKey")"
 
-  [[ -n "$WARP4_1_RESERVED" ]] || WARP4_1_RESERVED="0, 0, 0"
-  [[ -n "$WARP4_2_RESERVED" ]] || WARP4_2_RESERVED="0, 0, 0"
-  [[ -n "$WARP6_1_RESERVED" ]] || WARP6_1_RESERVED="0, 0, 0"
-  [[ -n "$WARP6_2_RESERVED" ]] || WARP6_2_RESERVED="0, 0, 0"
-fi
+  WARP4_1_ADDR="$(profile_address_v4 "$WARP4_1_PROFILE")"
+  WARP4_2_ADDR="$(profile_address_v4 "$WARP4_2_PROFILE")"
+  WARP6_1_ADDR="$(profile_address_v6 "$WARP6_1_PROFILE")"
+  WARP6_2_ADDR="$(profile_address_v6 "$WARP6_2_PROFILE")"
 
-for value in WARP4_1_KEY WARP4_2_KEY WARP6_1_KEY WARP6_2_KEY WARP4_1_ADDR WARP4_2_ADDR WARP6_1_ADDR WARP6_2_ADDR WARP4_1_PEER WARP4_2_PEER WARP6_1_PEER WARP6_2_PEER; do
-  [[ -n "${!value}" ]] || die "Failed to parse $value from generated WARP profiles"
-done
+  WARP4_1_PEER="$(profile_value "$WARP4_1_PROFILE" "PublicKey")"
+  WARP4_2_PEER="$(profile_value "$WARP4_2_PROFILE" "PublicKey")"
+  WARP6_1_PEER="$(profile_value "$WARP6_1_PROFILE" "PublicKey")"
+  WARP6_2_PEER="$(profile_value "$WARP6_2_PROFILE" "PublicKey")"
 
-DOMAIN_V4_JSON="$(json_escape "$DOMAIN_V4")"
-DOMAIN_V6_JSON="$(json_escape "$DOMAIN_V6")"
-ACME_EMAIL_JSON="$(json_escape "$ACME_EMAIL")"
-CF_TOKEN_JSON="$(json_escape "$CF_TOKEN")"
+  WARP4_1_ENDPOINT="$(profile_endpoint_host "$WARP4_1_PROFILE")"
+  WARP4_2_ENDPOINT="$(profile_endpoint_host "$WARP4_2_PROFILE")"
+  WARP6_1_ENDPOINT="$(profile_endpoint_host "$WARP6_1_PROFILE")"
+  WARP6_2_ENDPOINT="$(profile_endpoint_host "$WARP6_2_PROFILE")"
 
-if [[ -f "$CONFIG_PATH" ]]; then
-  BACKUP_PATH="$CONFIG_PATH.bak-$(date +%Y%m%d-%H%M%S)"
-  cp "$CONFIG_PATH" "$BACKUP_PATH"
-  chmod 600 "$BACKUP_PATH"
-  echo "Backed up old config to $BACKUP_PATH"
-fi
+  WARP4_1_PORT="$(profile_endpoint_port "$WARP4_1_PROFILE")"
+  WARP4_2_PORT="$(profile_endpoint_port "$WARP4_2_PROFILE")"
+  WARP6_1_PORT="$(profile_endpoint_port "$WARP6_1_PROFILE")"
+  WARP6_2_PORT="$(profile_endpoint_port "$WARP6_2_PROFILE")"
 
-umask 077
-cat > "$CONFIG_PATH" <<EOF
+  WARP4_1_RESERVED="0, 0, 0"
+  WARP4_2_RESERVED="0, 0, 0"
+  WARP6_1_RESERVED="0, 0, 0"
+  WARP6_2_RESERVED="0, 0, 0"
+
+  if [[ "$flavor" == "warp-yg" || "$flavor" == "warp-go" ]]; then
+    WARP4_1_RESERVED="$(json_reserved "$WARP4_1_SINGBOX")"
+    WARP4_2_RESERVED="$(json_reserved "$WARP4_2_SINGBOX")"
+    WARP6_1_RESERVED="$(json_reserved "$WARP6_1_SINGBOX")"
+    WARP6_2_RESERVED="$(json_reserved "$WARP6_2_SINGBOX")"
+
+    [[ -n "$WARP4_1_RESERVED" ]] || WARP4_1_RESERVED="0, 0, 0"
+    [[ -n "$WARP4_2_RESERVED" ]] || WARP4_2_RESERVED="0, 0, 0"
+    [[ -n "$WARP6_1_RESERVED" ]] || WARP6_1_RESERVED="0, 0, 0"
+    [[ -n "$WARP6_2_RESERVED" ]] || WARP6_2_RESERVED="0, 0, 0"
+  fi
+
+  for value in WARP4_1_KEY WARP4_2_KEY WARP6_1_KEY WARP6_2_KEY WARP4_1_ADDR WARP4_2_ADDR WARP6_1_ADDR WARP6_2_ADDR WARP4_1_PEER WARP4_2_PEER WARP6_1_PEER WARP6_2_PEER; do
+    [[ -n "${!value}" ]] || return 1
+  done
+}
+
+clear_warp_profile() {
+  local tag="$1"
+
+  case "$CURRENT_WARP_FLAVOR" in
+    warp-yg)
+      rm -f "$WARP_YG_BASE/$tag/warp.conf" "$WARP_YG_BASE/$tag/warp-yg-profile.conf" "$WARP_YG_BASE/$tag/warp-yg-singbox.json"
+      ;;
+    warp-go)
+      rm -f "$WARP_GO_BASE/$tag/warp.conf" "$WARP_GO_BASE/$tag/warp-go-profile.conf" "$WARP_GO_BASE/$tag/warp-go-singbox.json"
+      ;;
+    wgcf)
+      rm -f "$WGCF_BASE/$tag/wgcf-account.toml" "$WGCF_BASE/$tag/wgcf-profile.conf"
+      ;;
+  esac
+}
+
+prepare_warp_generation() {
+  WARP_TOOL="$CURRENT_WARP_FLAVOR"
+  ensure_warp_tools
+  detect_warp_tool
+  CURRENT_WARP_FLAVOR="$WARP_TOOL"
+
+  if [[ "$CURRENT_WARP_FLAVOR" == "warp-yg" ]]; then
+    ensure_warp_yg_repo
+  fi
+}
+
+regenerate_warp_tags() {
+  local tag
+
+  prepare_warp_generation
+  for tag in "$@"; do
+    echo "Regenerating $tag with $CURRENT_WARP_FLAVOR..."
+    clear_warp_profile "$tag"
+    make_warp_profile "$tag"
+  done
+
+  load_warp_profile_state "$CURRENT_WARP_FLAVOR" || die "Failed to load generated WARP profiles"
+}
+
+render_warp_endpoint() {
+  local family="$1"
+  local index="$2"
+  local base tag addr key peer endpoint port reserved allowed_ips resolver bind_address bind_key
+
+  base="WARP${family}_${index}"
+  tag="warp-v${family}-${index}"
+  addr="${base}_ADDR"
+  key="${base}_KEY"
+  peer="${base}_PEER"
+  endpoint="${base}_ENDPOINT"
+  port="${base}_PORT"
+  reserved="${base}_RESERVED"
+
+  if [[ "$family" == "4" ]]; then
+    allowed_ips="0.0.0.0/0"
+    resolver="ipv4_only"
+    bind_key="inet4_bind_address"
+    bind_address="${EGRESS_V4_ADDRS[$index]}"
+  else
+    allowed_ips="::/0"
+    resolver="ipv6_only"
+    bind_key="inet6_bind_address"
+    bind_address="${EGRESS_V6_ADDRS[$index]}"
+  fi
+
+  cat <<EOF
+    {
+      "type": "wireguard",
+      "tag": "$tag",
+      "mtu": 1280,
+      "address": [
+        "${!addr}"
+      ],
+      "private_key": "${!key}",
+      "peers": [
+        {
+          "address": "${!endpoint:-engage.cloudflareclient.com}",
+          "port": ${!port:-2408},
+          "public_key": "${!peer}",
+          "reserved": [${!reserved}],
+          "allowed_ips": [
+            "$allowed_ips"
+          ]
+        }
+      ],
+      "bind_interface": "${EGRESS_IFACES[$index]}",
+      "$bind_key": "$bind_address",
+      "domain_resolver": {
+        "server": "cf-dns",
+        "strategy": "$resolver"
+      }
+    }
+EOF
+}
+
+render_warp_endpoints() {
+  local family index first
+
+  first=true
+  for family in 4 6; do
+    for index in 1 2; do
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      render_warp_endpoint "$family" "$index"
+    done
+  done
+}
+
+render_hysteria_users() {
+  local family kind index user_name password first
+
+  first=true
+  for family in 4 6; do
+    for kind in direct warp; do
+      for index in 1 2; do
+        user_name="${kind}-v${family}-${index}"
+        password="$(json_escape "$(user_password "$user_name")")"
+        if [[ "$first" == "true" ]]; then
+          first=false
+        else
+          echo ","
+        fi
+        cat <<EOF
+        {
+          "name": "$user_name",
+          "password": "$password"
+        }
+EOF
+      done
+    done
+  done
+}
+
+render_direct_outbounds() {
+  local family index tag resolver bind_key bind_address first
+
+  first=true
+  for family in 4 6; do
+    for index in 1 2; do
+      tag="direct-v${family}-${index}"
+      if [[ "$family" == "4" ]]; then
+        resolver="ipv4_only"
+        bind_key="inet4_bind_address"
+        bind_address="${EGRESS_V4_ADDRS[$index]}"
+      else
+        resolver="ipv6_only"
+        bind_key="inet6_bind_address"
+        bind_address="${EGRESS_V6_ADDRS[$index]}"
+      fi
+
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      cat <<EOF
+    {
+      "type": "direct",
+      "tag": "$tag",
+      "bind_interface": "${EGRESS_IFACES[$index]}",
+      "$bind_key": "$bind_address",
+      "domain_resolver": {
+        "server": "cf-dns",
+        "strategy": "$resolver"
+      }
+    }
+EOF
+    done
+  done
+}
+
+render_auth_user_array() {
+  local family kind index user_name first
+
+  family="$1"
+  first=true
+  for kind in direct warp; do
+    for index in 1 2; do
+      user_name="${kind}-v${family}-${index}"
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      printf '          "%s"' "$user_name"
+    done
+  done
+  echo
+}
+
+render_user_outbound_rules() {
+  local family kind index user_name first
+
+  first=true
+  for family in 4 6; do
+    for kind in direct warp; do
+      for index in 1 2; do
+        user_name="${kind}-v${family}-${index}"
+        if [[ "$first" == "true" ]]; then
+          first=false
+        else
+          echo ","
+        fi
+        cat <<EOF
+      {
+        "auth_user": "$user_name",
+        "outbound": "$user_name"
+      }
+EOF
+      done
+    done
+  done
+}
+
+render_route_rules() {
+  cat <<EOF
+      {
+        "auth_user": [
+$(render_auth_user_array 4)
+        ],
+        "action": "resolve",
+        "strategy": "ipv4_only"
+      },
+      {
+        "auth_user": [
+$(render_auth_user_array 6)
+        ],
+        "action": "resolve",
+        "strategy": "ipv6_only"
+      },
+      {
+        "auth_user": [
+$(render_auth_user_array 4)
+        ],
+        "ip_version": 6,
+        "action": "reject"
+      },
+      {
+        "auth_user": [
+$(render_auth_user_array 6)
+        ],
+        "ip_version": 4,
+        "action": "reject"
+      },
+$(render_user_outbound_rules)
+EOF
+}
+
+write_singbox_config() {
+  local domain_v4_json domain_v6_json acme_email_json cf_token_json backup_path
+  local endpoints_json users_json outbounds_json route_rules_json
+
+  load_warp_profile_state "$CURRENT_WARP_FLAVOR" || die "Generated WARP profiles are missing; choose menu option 2 first"
+  load_egress_bindings
+
+  domain_v4_json="$(json_escape "$DOMAIN_V4")"
+  domain_v6_json="$(json_escape "$DOMAIN_V6")"
+  acme_email_json="$(json_escape "$ACME_EMAIL")"
+  cf_token_json="$(json_escape "$CF_TOKEN")"
+  endpoints_json="$(render_warp_endpoints)"
+  users_json="$(render_hysteria_users)"
+  outbounds_json="$(render_direct_outbounds)"
+  route_rules_json="$(render_route_rules)"
+
+  if [[ -f "$CONFIG_PATH" ]]; then
+    backup_path="$CONFIG_PATH.bak-$(date +%Y%m%d-%H%M%S)"
+    cp "$CONFIG_PATH" "$backup_path"
+    chmod 600 "$backup_path"
+    echo "Backed up old config to $backup_path"
+  fi
+
+  umask 077
+  cat > "$CONFIG_PATH" <<EOF
 {
   "log": {
     "level": "info",
@@ -716,102 +1122,7 @@ cat > "$CONFIG_PATH" <<EOF
     ]
   },
   "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "warp-ipv4-1",
-      "mtu": 1280,
-      "address": [
-        "$WARP4_1_ADDR"
-      ],
-      "private_key": "$WARP4_1_KEY",
-      "peers": [
-        {
-          "address": "${WARP4_1_ENDPOINT:-engage.cloudflareclient.com}",
-          "port": ${WARP4_1_PORT:-2408},
-          "public_key": "$WARP4_1_PEER",
-          "reserved": [$WARP4_1_RESERVED],
-          "allowed_ips": [
-            "0.0.0.0/0"
-          ]
-        }
-      ],
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv4_only"
-      }
-    },
-    {
-      "type": "wireguard",
-      "tag": "warp-ipv4-2",
-      "mtu": 1280,
-      "address": [
-        "$WARP4_2_ADDR"
-      ],
-      "private_key": "$WARP4_2_KEY",
-      "peers": [
-        {
-          "address": "${WARP4_2_ENDPOINT:-engage.cloudflareclient.com}",
-          "port": ${WARP4_2_PORT:-2408},
-          "public_key": "$WARP4_2_PEER",
-          "reserved": [$WARP4_2_RESERVED],
-          "allowed_ips": [
-            "0.0.0.0/0"
-          ]
-        }
-      ],
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv4_only"
-      }
-    },
-    {
-      "type": "wireguard",
-      "tag": "warp-ipv6-1",
-      "mtu": 1280,
-      "address": [
-        "$WARP6_1_ADDR"
-      ],
-      "private_key": "$WARP6_1_KEY",
-      "peers": [
-        {
-          "address": "${WARP6_1_ENDPOINT:-engage.cloudflareclient.com}",
-          "port": ${WARP6_1_PORT:-2408},
-          "public_key": "$WARP6_1_PEER",
-          "reserved": [$WARP6_1_RESERVED],
-          "allowed_ips": [
-            "::/0"
-          ]
-        }
-      ],
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv6_only"
-      }
-    },
-    {
-      "type": "wireguard",
-      "tag": "warp-ipv6-2",
-      "mtu": 1280,
-      "address": [
-        "$WARP6_2_ADDR"
-      ],
-      "private_key": "$WARP6_2_KEY",
-      "peers": [
-        {
-          "address": "${WARP6_2_ENDPOINT:-engage.cloudflareclient.com}",
-          "port": ${WARP6_2_PORT:-2408},
-          "public_key": "$WARP6_2_PEER",
-          "reserved": [$WARP6_2_RESERVED],
-          "allowed_ips": [
-            "::/0"
-          ]
-        }
-      ],
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv6_only"
-      }
-    }
+$endpoints_json
   ],
   "inbounds": [
     {
@@ -820,150 +1131,196 @@ cat > "$CONFIG_PATH" <<EOF
       "listen": "::",
       "listen_port": $LISTEN_PORT,
       "users": [
-        {
-          "name": "ipv4-1",
-          "password": "$PASS_IPV4_1"
-        },
-        {
-          "name": "ipv4-2",
-          "password": "$PASS_IPV4_2"
-        },
-        {
-          "name": "ipv4-3",
-          "password": "$PASS_IPV4_3"
-        },
-        {
-          "name": "ipv6-1",
-          "password": "$PASS_IPV6_1"
-        },
-        {
-          "name": "ipv6-2",
-          "password": "$PASS_IPV6_2"
-        },
-        {
-          "name": "ipv6-3",
-          "password": "$PASS_IPV6_3"
-        }
+$users_json
       ],
       "tls": {
         "enabled": true,
-        "server_name": "$DOMAIN_V4_JSON",
+        "server_name": "$domain_v4_json",
         "acme": {
           "domain": [
-            "$DOMAIN_V4_JSON",
-            "$DOMAIN_V6_JSON"
+            "$domain_v4_json",
+            "$domain_v6_json"
           ],
-          "email": "$ACME_EMAIL_JSON",
+          "email": "$acme_email_json",
           "dns01_challenge": {
             "provider": "cloudflare",
-            "api_token": "$CF_TOKEN_JSON"
+            "api_token": "$cf_token_json"
           }
         }
       }
     }
   ],
   "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct-ipv4",
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv4_only"
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "direct-ipv6",
-      "domain_resolver": {
-        "server": "cf-dns",
-        "strategy": "ipv6_only"
-      }
-    }
+$outbounds_json
   ],
   "route": {
     "rules": [
-      {
-        "auth_user": [
-          "ipv4-1",
-          "ipv4-2",
-          "ipv4-3"
-        ],
-        "action": "resolve",
-        "strategy": "ipv4_only"
-      },
-      {
-        "auth_user": [
-          "ipv6-1",
-          "ipv6-2",
-          "ipv6-3"
-        ],
-        "action": "resolve",
-        "strategy": "ipv6_only"
-      },
-      {
-        "auth_user": [
-          "ipv4-1",
-          "ipv4-2",
-          "ipv4-3"
-        ],
-        "ip_version": 6,
-        "action": "reject"
-      },
-      {
-        "auth_user": [
-          "ipv6-1",
-          "ipv6-2",
-          "ipv6-3"
-        ],
-        "ip_version": 4,
-        "action": "reject"
-      },
-      {
-        "auth_user": "ipv4-1",
-        "outbound": "direct-ipv4"
-      },
-      {
-        "auth_user": "ipv4-2",
-        "outbound": "warp-ipv4-1"
-      },
-      {
-        "auth_user": "ipv4-3",
-        "outbound": "warp-ipv4-2"
-      },
-      {
-        "auth_user": "ipv6-1",
-        "outbound": "direct-ipv6"
-      },
-      {
-        "auth_user": "ipv6-2",
-        "outbound": "warp-ipv6-1"
-      },
-      {
-        "auth_user": "ipv6-3",
-        "outbound": "warp-ipv6-2"
-      }
+$route_rules_json
     ],
-    "final": "direct-ipv4"
+    "final": "direct-v4-1"
   }
 }
 EOF
 
-chmod 600 "$CONFIG_PATH"
+  chmod 600 "$CONFIG_PATH"
 
-echo "Checking sing-box config..."
-sing-box check -c "$CONFIG_PATH"
+  echo "Checking sing-box config..."
+  sing-box check -c "$CONFIG_PATH"
 
-echo "Restarting sing-box..."
-systemctl enable --now sing-box
-systemctl restart sing-box
+  echo "Restarting sing-box..."
+  systemctl enable --now sing-box
+  systemctl restart sing-box
+}
 
-echo
-echo "Done. HY2 client entries using IPv4/SNI domain:"
-echo "{ name: \"oracle hy ipv4-1 direct\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV4_1\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo "{ name: \"oracle hy ipv4-2 warp\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV4_2\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo "{ name: \"oracle hy ipv4-3 warp\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV4_3\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo "{ name: \"oracle hy ipv6-1 direct\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV6_1\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo "{ name: \"oracle hy ipv6-2 warp\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV6_2\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo "{ name: \"oracle hy ipv6-3 warp\", type: hysteria2, server: $DOMAIN_V4, port: $LISTEN_PORT, password: \"$PASS_IPV6_3\", sni: \"$DOMAIN_V4\", skip-cert-verify: false }"
-echo
-echo "Same passwords also work with server/sni: $DOMAIN_V6"
+print_proxy_information() {
+  local country node_name node_name_v6 server sni_name server_index family kind index user_name password display_index
+
+  prompt country "Country"
+  prompt node_name "Node name"
+  node_name_v6="${node_name}-v6"
+
+  echo
+  echo "Proxy information:"
+  for server_index in 1 2; do
+    if [[ "$server_index" == "1" ]]; then
+      server="$DOMAIN_V4"
+      sni_name="$node_name"
+    else
+      server="$DOMAIN_V6"
+      sni_name="$node_name_v6"
+    fi
+    for family in 4 6; do
+      for kind in direct warp; do
+        for index in 1 2; do
+          user_name="${kind}-v${family}-${index}"
+          password="$(user_password "$user_name")"
+          printf -v display_index '%02d' "$index"
+          echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
+        done
+      done
+    done
+  done
+  echo
+}
+
+change_sni() {
+  prompt DOMAIN_V4 "IPv4/SNI domain" "$DOMAIN_V4"
+  prompt DOMAIN_V6 "IPv6/SNI domain" "$DOMAIN_V6"
+  write_singbox_config
+  echo "SNI updated."
+}
+
+regenerate_selected_warp_menu() {
+  local choice
+
+  echo
+  echo "Select WARP profile to regenerate:"
+  echo "1. warp-v4-1"
+  echo "2. warp-v4-2"
+  echo "3. warp-v6-1"
+  echo "4. warp-v6-2"
+  echo "5. all IPv4 WARP"
+  echo "6. all IPv6 WARP"
+  echo "7. all WARP"
+  echo "0. back"
+  read -r -p "Choice: " choice
+
+  case "$choice" in
+    1) regenerate_warp_tags "$(warp_profile_tag 4 1)" ;;
+    2) regenerate_warp_tags "$(warp_profile_tag 4 2)" ;;
+    3) regenerate_warp_tags "$(warp_profile_tag 6 1)" ;;
+    4) regenerate_warp_tags "$(warp_profile_tag 6 2)" ;;
+    5) regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" ;;
+    6) regenerate_warp_tags "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)" ;;
+    7) regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)" ;;
+    0) return 0 ;;
+    *) echo "Invalid choice"; return 0 ;;
+  esac
+
+  write_singbox_config
+  echo "Selected WARP profile(s) regenerated."
+}
+
+main_menu() {
+  local choice
+
+  while true; do
+    echo
+    echo "==== Sing-box HY2 + WARP Menu ===="
+    echo "Current IPv4/SNI: $DOMAIN_V4"
+    echo "Current IPv6/SNI: $DOMAIN_V6"
+    echo "Current WARP mode: $CURRENT_WARP_FLAVOR"
+    echo "1. 重新生成密碼"
+    echo "2. 重新生成所有 WARP"
+    echo "3. 重新生成指定的 WARP"
+    echo "4. 改變 SNI"
+    echo "5. 輸出 proxy information"
+    echo "0. 退出"
+    read -r -p "Choice: " choice
+
+    case "$choice" in
+      1)
+        regenerate_passwords
+        write_singbox_config
+        echo "Passwords regenerated."
+        ;;
+      2)
+        regenerate_warp_tags "$(warp_profile_tag 4 1)" "$(warp_profile_tag 4 2)" "$(warp_profile_tag 6 1)" "$(warp_profile_tag 6 2)"
+        write_singbox_config
+        echo "All WARP profiles regenerated."
+        ;;
+      3)
+        regenerate_selected_warp_menu
+        ;;
+      4)
+        change_sni
+        ;;
+      5)
+        print_proxy_information
+        ;;
+      0)
+        exit 0
+        ;;
+      *)
+        echo "Invalid choice"
+        ;;
+    esac
+  done
+}
+
+load_initial_state() {
+  local existing_domain_v4 existing_domain_v6 existing_email existing_token
+
+  existing_domain_v4="$(config_json_value "server_name")"
+  existing_domain_v6="$(config_acme_domain 2)"
+  existing_email="$(config_json_value "email")"
+  existing_token="$(config_json_value "api_token")"
+
+  DOMAIN_V4="$existing_domain_v4"
+  DOMAIN_V6="$existing_domain_v6"
+  ACME_EMAIL="$existing_email"
+  CF_TOKEN="$existing_token"
+
+  [[ -n "$DOMAIN_V4" ]] || prompt DOMAIN_V4 "IPv4/SNI domain" "xxx.com"
+  [[ -n "$DOMAIN_V6" ]] || prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
+  [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
+  [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
+
+  load_passwords_from_config
+  CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
+
+  if load_warp_profile_state "$CURRENT_WARP_FLAVOR"; then
+    echo "Loaded existing WARP profiles from $CURRENT_WARP_FLAVOR."
+  else
+    echo "WARNING: No complete generated WARP profile set found. Use menu option 2 before writing config."
+  fi
+}
+
+main() {
+  require_base_commands
+  init_runtime
+  load_initial_state
+  main_menu
+}
+
+main "$@"
