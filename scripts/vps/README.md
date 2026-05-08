@@ -1,6 +1,6 @@
 # HY2 + WARP Sing-box Setup
 
-This directory contains `setup-hy2-warp.sh`, a helper script for building a Sing-box config with:
+This directory contains `warp-singbox.sh`, a helper script for building a Sing-box config with:
 
 - one Hysteria2 inbound on port `443`
 - direct IPv4 and IPv6 outbounds
@@ -13,16 +13,14 @@ This directory contains `setup-hy2-warp.sh`, a helper script for building a Sing
   - `ipv6-2` -> WARP IPv6 profile 1
   - `ipv6-3` -> WARP IPv6 profile 2
 
-The script prefers `warp-go` because it can export the `reserved` bytes required by modern Cloudflare WARP WireGuard handshakes. It can still fall back to `wgcf`.
+The script now uses the yonggekkk `warp-yg` generation flow by default for WARP config creation, then exports WireGuard and Sing-box profile data with `warp-go`. It can still be forced to the older `warp-go` or `wgcf` modes with `WARP_TOOL`.
 
 ## What The Script Does
 
 When run, the script:
 
-1. Downloads missing WARP tools from GitHub:
-   - `warp-go` from `Fangliding/warp-go`
-   - `wgcf` from `ViRb3/wgcf`
-2. Generates four separate WARP profiles.
+1. Downloads missing WARP tools from GitHub.
+2. Generates four separate WARP profiles using the `warp-yg` account/config flow from `https://github.com/yonggekkk/warp-yg.git`.
 3. Writes `/etc/sing-box/config.json`.
 4. Backs up the previous config to `config.json.bak-YYYYMMDD-HHMMSS`.
 5. Runs `sing-box check`.
@@ -41,6 +39,7 @@ Required commands:
 - `awk`
 - `cp`
 - `find`
+- `git`
 - `head`
 - `mkdir`
 - `mktemp`
@@ -60,7 +59,7 @@ The script currently auto-detects these CPU architectures:
 Run:
 
 ```bash
-/etc/sing-box/setup-hy2-warp.sh
+/etc/sing-box/warp-singbox.sh
 ```
 
 The script will prompt for:
@@ -72,12 +71,20 @@ The script will prompt for:
 
 If an existing Sing-box config already contains the ACME email or Cloudflare token, pressing Enter keeps the existing value.
 
-## Force warp-go
+## Default warp-yg
 
-Use this if you specifically want `warp-go` and do not want fallback behavior:
+This is the default and uses the yonggekkk `warp-yg` account/config flow:
 
 ```bash
-WARP_TOOL=warp-go /etc/sing-box/setup-hy2-warp.sh
+WARP_TOOL=warp-yg /etc/sing-box/warp-singbox.sh
+```
+
+## Force Legacy warp-go
+
+Use this if you specifically want the old direct `warp-go --register` behavior:
+
+```bash
+WARP_TOOL=warp-go /etc/sing-box/warp-singbox.sh
 ```
 
 ## Force wgcf
@@ -85,7 +92,7 @@ WARP_TOOL=warp-go /etc/sing-box/setup-hy2-warp.sh
 Use this only if `warp-go` is not working for your environment:
 
 ```bash
-WARP_TOOL=wgcf /etc/sing-box/setup-hy2-warp.sh
+WARP_TOOL=wgcf /etc/sing-box/warp-singbox.sh
 ```
 
 `wgcf` profiles do not provide real `reserved` bytes, so WARP connectivity may be less reliable.
@@ -95,20 +102,21 @@ WARP_TOOL=wgcf /etc/sing-box/setup-hy2-warp.sh
 If you already installed the binaries yourself:
 
 ```bash
-AUTO_DOWNLOAD_WARP_TOOLS=false /etc/sing-box/setup-hy2-warp.sh
+AUTO_DOWNLOAD_WARP_TOOLS=false /etc/sing-box/warp-singbox.sh
 ```
 
-Default binary paths:
+Default paths:
 
 ```bash
 /root/warp-go/warp-go
+/root/warp-yg
 /root/wgcf/wgcf
 ```
 
 Override paths if needed:
 
 ```bash
-WARP_GO_BIN=/custom/path/warp-go WGCF_BIN=/custom/path/wgcf /etc/sing-box/setup-hy2-warp.sh
+WARP_GO_BIN=/custom/path/warp-go WARP_YG_BASE=/custom/warp-yg /etc/sing-box/warp-singbox.sh
 ```
 
 ## Important Environment Variables
@@ -117,16 +125,35 @@ WARP_GO_BIN=/custom/path/warp-go WGCF_BIN=/custom/path/wgcf /etc/sing-box/setup-
 | --- | --- | --- |
 | `CONFIG_PATH` | `/etc/sing-box/config.json` | Output Sing-box config path |
 | `AUTO_DOWNLOAD_WARP_TOOLS` | `true` | Download missing `warp-go` and/or `wgcf` |
-| `WARP_TOOL` | `auto` | `auto`, `warp-go`, or `wgcf` |
+| `WARP_TOOL` | `warp-yg` | `warp-yg`, `auto`, `warp-go`, or `wgcf` |
 | `WARP_GO_BIN` | `/root/warp-go/warp-go` | `warp-go` binary path |
 | `WARP_GO_BASE` | `/root/warp-go` | Directory for generated `warp-go` profiles |
+| `WARP_YG_BASE` | `/root/warp-yg` | Directory for generated `warp-yg` profiles |
+| `WARP_YG_REPO_URL` | `https://github.com/yonggekkk/warp-yg.git` | `warp-yg` generator repo URL |
+| `WARP_YG_REPO_DIR` | `/root/warp-yg/source` | Local checkout for the `warp-yg` generator repo |
 | `WGCF_BIN` | `/root/wgcf/wgcf` | `wgcf` binary path |
 | `WGCF_BASE` | `/root/wgcf` | Directory for generated `wgcf` profiles |
 | `LISTEN_PORT` | `443` | Hysteria2 listen port |
 
 ## Generated Files
 
-With `warp-go`, profile files are created under:
+With default `warp-yg`, profile files are created under:
+
+```text
+/root/warp-yg/warp-ipv4-1/
+/root/warp-yg/warp-ipv4-2/
+/root/warp-yg/warp-ipv6-1/
+/root/warp-yg/warp-ipv6-2/
+```
+
+Each profile directory contains:
+
+- `warp.conf`
+- `warp-yg-profile.conf`
+- `warp-yg-singbox.json`
+- a copied `warp-go` binary
+
+With legacy `warp-go`, profile files are created under:
 
 ```text
 /root/warp-go/warp-ipv4-1/
@@ -170,6 +197,6 @@ systemctl restart sing-box
 ## Notes
 
 - WARP+ is not required for this setup.
-- `warp-go` is preferred because it exports the Sing-box `reserved` field.
+- `warp-yg` is the default WARP config generation flow.
 - If WARP outbounds show as unavailable, the most common cause is a failed WireGuard handshake.
 - The current route tags are preserved by the script, so existing client naming stays predictable.

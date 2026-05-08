@@ -3,12 +3,17 @@ set -euo pipefail
 
 CONFIG_PATH="${CONFIG_PATH:-/etc/sing-box/config.json}"
 AUTO_DOWNLOAD_WARP_TOOLS="${AUTO_DOWNLOAD_WARP_TOOLS:-true}"
-WARP_TOOL="${WARP_TOOL:-auto}"
+WARP_TOOL="${WARP_TOOL:-warp-yg}"
 WARP_GO_BIN="${WARP_GO_BIN:-/root/warp-go/warp-go}"
 WARP_GO_BASE="${WARP_GO_BASE:-/root/warp-go}"
+WARP_YG_BASE="${WARP_YG_BASE:-/root/warp-yg}"
+WARP_YG_REPO_URL="${WARP_YG_REPO_URL:-https://github.com/yonggekkk/warp-yg.git}"
+WARP_YG_REPO_DIR="${WARP_YG_REPO_DIR:-$WARP_YG_BASE/source}"
+WARP_YG_ACCOUNT_SOURCE="${WARP_YG_ACCOUNT_SOURCE:-auto}"
 WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
+WARP_YG_ZEROTEAM_FAILED=false
 
 die() {
   echo "ERROR: $*" >&2
@@ -35,7 +40,7 @@ fetch_url() {
 
   if [[ "$FETCH_CMD" == "curl" ]]; then
     if [[ -n "$output" ]]; then
-      curl -fL --retry 3 --connect-timeout 20 -o "$output" "$url"
+      curl -fsSL --retry 3 --connect-timeout 20 -o "$output" "$url"
     else
       curl -fsL --retry 3 --connect-timeout 20 "$url"
     fi
@@ -74,6 +79,27 @@ config_json_value() {
       line = $0
       sub(".*\"" key "\"[[:space:]]*:[[:space:]]*\"", "", line)
       sub("\".*", "", line)
+      print line
+      exit
+    }
+  ' "$CONFIG_PATH"
+}
+
+config_user_password() {
+  local user_name="$1"
+
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk -v user_name="$user_name" '
+    /"name"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      current_name = line
+    }
+    current_name == user_name && /"password"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"password"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
       print line
       exit
     }
@@ -120,6 +146,16 @@ rand_password() {
   openssl rand -base64 24
 }
 
+existing_or_rand_password() {
+  local existing_value="$1"
+
+  if [[ -n "$existing_value" ]]; then
+    printf '%s' "$existing_value"
+  else
+    rand_password
+  fi
+}
+
 github_arch() {
   case "$(uname -m)" in
     x86_64 | amd64) printf 'amd64' ;;
@@ -127,6 +163,16 @@ github_arch() {
     armv7l | armv7) printf 'armv7' ;;
     i386 | i686) printf '386' ;;
     *) die "Unsupported architecture for auto-download: $(uname -m)" ;;
+  esac
+}
+
+warp_yg_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'amd64' ;;
+    aarch64 | arm64) printf 'arm64' ;;
+    armv7l | armv7) printf 'arm' ;;
+    i386 | i686) printf '386' ;;
+    *) die "Unsupported architecture for warp-yg fallback: $(uname -m)" ;;
   esac
 }
 
@@ -212,6 +258,21 @@ install_github_binary() {
   echo "Installed $name to $dest"
 }
 
+ensure_warp_yg_repo() {
+  [[ "$AUTO_DOWNLOAD_WARP_TOOLS" == "true" ]] || return 0
+
+  need_cmd git
+  mkdir -p "$(dirname "$WARP_YG_REPO_DIR")"
+
+  if [[ -d "$WARP_YG_REPO_DIR/.git" ]]; then
+    git -C "$WARP_YG_REPO_DIR" pull --ff-only || echo "WARNING: could not update $WARP_YG_REPO_DIR; using existing checkout"
+  elif [[ -e "$WARP_YG_REPO_DIR" ]]; then
+    die "$WARP_YG_REPO_DIR exists but is not a git checkout"
+  else
+    git clone --depth 1 "$WARP_YG_REPO_URL" "$WARP_YG_REPO_DIR"
+  fi
+}
+
 ensure_warp_tools() {
   local arch linux_arch warp_go_regex wgcf_regex
 
@@ -227,6 +288,9 @@ ensure_warp_tools() {
       install_github_binary "Fangliding/warp-go" "warp-go" "$WARP_GO_BIN" "$warp_go_regex"
       install_github_binary "ViRb3/wgcf" "wgcf" "$WGCF_BIN" "$wgcf_regex"
       ;;
+    warp-yg)
+      install_github_binary "Fangliding/warp-go" "warp-go" "$WARP_GO_BIN" "$warp_go_regex"
+      ;;
     warp-go)
       install_github_binary "Fangliding/warp-go" "warp-go" "$WARP_GO_BIN" "$warp_go_regex"
       ;;
@@ -234,6 +298,81 @@ ensure_warp_tools() {
       install_github_binary "ViRb3/wgcf" "wgcf" "$WGCF_BIN" "$wgcf_regex"
       ;;
   esac
+}
+
+write_warp_yg_fallback_conf() {
+  local output_path="$1"
+  local cpu warpapi output private_key device_id warp_token
+
+  need_cmd mktemp
+  cpu="$(warp_yg_arch)"
+  warpapi="$(mktemp)"
+
+  fetch_url "https://gitlab.com/rwkgyg/CFwarp/-/raw/main/point/cpu1/$cpu" "$warpapi"
+  chmod +x "$warpapi"
+  output="$("$warpapi")"
+  rm -f "$warpapi"
+
+  private_key="$(awk -F ': ' '/private_key/{print $2}' <<< "$output")"
+  device_id="$(awk -F ': ' '/device_id/{print $2}' <<< "$output")"
+  warp_token="$(awk -F ': ' '/token/{print $2}' <<< "$output")"
+  [[ -n "$private_key" && -n "$device_id" && -n "$warp_token" ]] || die "warp-yg fallback did not return a complete WARP account"
+
+  cat > "$output_path" <<EOF
+[Account]
+Device = $device_id
+PrivateKey = $private_key
+Token = $warp_token
+Type = free
+Name = WARP
+MTU  = 1280
+
+[Peer]
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+Endpoint = 162.159.193.10:2408
+# AllowedIPs = 0.0.0.0/0
+# AllowedIPs = ::/0
+KeepAlive = 30
+EOF
+}
+
+valid_warp_yg_conf() {
+  local path="$1"
+
+  [[ -s "$path" ]] || return 1
+  grep -q '^[[:space:]]*PrivateKey[[:space:]]*=' "$path" || return 1
+  grep -q '^[[:space:]]*Token[[:space:]]*=' "$path" || return 1
+  grep -q '^[[:space:]]*PublicKey[[:space:]]*=' "$path" || return 1
+}
+
+write_warp_yg_conf() {
+  local output_path="$1"
+
+  need_fetch_cmd
+
+  case "$WARP_YG_ACCOUNT_SOURCE" in
+    auto | zeroteam | warpapi) ;;
+    *) die "Unsupported WARP_YG_ACCOUNT_SOURCE: $WARP_YG_ACCOUNT_SOURCE" ;;
+  esac
+
+  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "warpapi" || "$WARP_YG_ZEROTEAM_FAILED" == "true" ]]; then
+    write_warp_yg_fallback_conf "$output_path"
+    return 0
+  fi
+
+  if fetch_url "https://api.zeroteam.top/warp?format=warp-go" "$output_path" && valid_warp_yg_conf "$output_path"; then
+    return 0
+  fi
+
+  rm -f "$output_path"
+  WARP_YG_ZEROTEAM_FAILED=true
+
+  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "zeroteam" ]]; then
+    die "warp-yg zeroteam account API failed"
+  fi
+
+  echo "WARNING: zeroteam WARP API failed; using warp-yg fallback generator for the rest of this run" >&2
+  write_warp_yg_fallback_conf "$output_path"
 }
 
 profile_value() {
@@ -255,12 +394,46 @@ profile_value() {
 
 profile_address_v4() {
   local profile="$1"
-  profile_value "$profile" "Address" | tr ',' '\n' | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if ($0 ~ /^[0-9.]+\/[0-9]+$/) { print; exit } }'
+  awk '
+    index($0, "=") {
+      left = substr($0, 1, index($0, "=") - 1)
+      right = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", left)
+      if (left == "Address") {
+        n = split(right, values, ",")
+        for (i = 1; i <= n; i++) {
+          value = values[i]
+          gsub(/^[[:space:]]+|[[:space:]\r]+$/, "", value)
+          if (value ~ /^[0-9.]+\/[0-9]+$/) {
+            print value
+            exit
+          }
+        }
+      }
+    }
+  ' "$profile"
 }
 
 profile_address_v6() {
   local profile="$1"
-  profile_value "$profile" "Address" | tr ',' '\n' | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if ($0 ~ /:/) { print; exit } }'
+  awk '
+    index($0, "=") {
+      left = substr($0, 1, index($0, "=") - 1)
+      right = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", left)
+      if (left == "Address") {
+        n = split(right, values, ",")
+        for (i = 1; i <= n; i++) {
+          value = values[i]
+          gsub(/^[[:space:]]+|[[:space:]\r]+$/, "", value)
+          if (value ~ /:/) {
+            print value
+            exit
+          }
+        }
+      }
+    }
+  ' "$profile"
 }
 
 profile_endpoint_host() {
@@ -315,12 +488,15 @@ detect_warp_tool() {
   case "$WARP_TOOL" in
     auto)
       if [[ -x "$WARP_GO_BIN" ]]; then
-        WARP_TOOL="warp-go"
+        WARP_TOOL="warp-yg"
       elif [[ -x "$WGCF_BIN" ]]; then
         WARP_TOOL="wgcf"
       else
         die "Missing WARP generator: set WARP_GO_BIN or WGCF_BIN to an executable"
       fi
+      ;;
+    warp-yg)
+      [[ -x "$WARP_GO_BIN" ]] || die "warp-go binary not found or not executable at $WARP_GO_BIN"
       ;;
     warp-go)
       [[ -x "$WARP_GO_BIN" ]] || die "warp-go binary not found or not executable at $WARP_GO_BIN"
@@ -338,7 +514,28 @@ make_warp_profile() {
   local tag="$1"
   local dir profile singbox_profile
 
-  if [[ "$WARP_TOOL" == "warp-go" ]]; then
+  if [[ "$WARP_TOOL" == "warp-yg" ]]; then
+    dir="$WARP_YG_BASE/$tag"
+    profile="$dir/warp-yg-profile.conf"
+    singbox_profile="$dir/warp-yg-singbox.json"
+
+    mkdir -p "$dir"
+    cp "$WARP_GO_BIN" "$dir/warp-go"
+    chmod +x "$dir/warp-go"
+
+    if [[ ! -s "$dir/warp.conf" ]]; then
+      write_warp_yg_conf "$dir/warp.conf"
+    fi
+
+    (
+      cd "$dir"
+      ./warp-go --config=warp.conf --export-wireguard="$profile"
+      ./warp-go --config=warp.conf --export-singbox="$singbox_profile"
+    )
+
+    [[ -f "$profile" ]] || die "WARP profile was not generated: $profile"
+    [[ -f "$singbox_profile" ]] || die "WARP sing-box profile was not generated: $singbox_profile"
+  elif [[ "$WARP_TOOL" == "warp-go" ]]; then
     dir="$WARP_GO_BASE/$tag"
     profile="$dir/warp-go-profile.conf"
     singbox_profile="$dir/warp-go-singbox.json"
@@ -381,6 +578,7 @@ make_warp_profile() {
 
 need_cmd awk
 need_cmd cp
+need_cmd grep
 need_cmd mkdir
 need_cmd openssl
 need_cmd sing-box
@@ -389,6 +587,9 @@ need_cmd tr
 
 ensure_warp_tools
 detect_warp_tool
+if [[ "$WARP_TOOL" == "warp-yg" ]]; then
+  ensure_warp_yg_repo
+fi
 
 EXISTING_ACME_EMAIL="$(config_json_value "email")"
 EXISTING_CF_TOKEN="$(config_json_value "api_token")"
@@ -399,19 +600,28 @@ prompt_keep_existing ACME_EMAIL "ACME email" "$EXISTING_ACME_EMAIL"
 prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$EXISTING_CF_TOKEN" true
 
 echo "Generating HY2 passwords..."
-PASS_IPV4_1="$(rand_password)"
-PASS_IPV4_2="$(rand_password)"
-PASS_IPV4_3="$(rand_password)"
-PASS_IPV6_1="$(rand_password)"
-PASS_IPV6_2="$(rand_password)"
-PASS_IPV6_3="$(rand_password)"
+PASS_IPV4_1="$(existing_or_rand_password "$(config_user_password "ipv4-1")")"
+PASS_IPV4_2="$(existing_or_rand_password "$(config_user_password "ipv4-2")")"
+PASS_IPV4_3="$(existing_or_rand_password "$(config_user_password "ipv4-3")")"
+PASS_IPV6_1="$(existing_or_rand_password "$(config_user_password "ipv6-1")")"
+PASS_IPV6_2="$(existing_or_rand_password "$(config_user_password "ipv6-2")")"
+PASS_IPV6_3="$(existing_or_rand_password "$(config_user_password "ipv6-3")")"
 
 echo "Generating four separate WARP profiles with $WARP_TOOL..."
 for tag in warp-ipv4-1 warp-ipv4-2 warp-ipv6-1 warp-ipv6-2; do
   make_warp_profile "$tag"
 done
 
-if [[ "$WARP_TOOL" == "warp-go" ]]; then
+if [[ "$WARP_TOOL" == "warp-yg" ]]; then
+  WARP4_1_PROFILE="$WARP_YG_BASE/warp-ipv4-1/warp-yg-profile.conf"
+  WARP4_2_PROFILE="$WARP_YG_BASE/warp-ipv4-2/warp-yg-profile.conf"
+  WARP6_1_PROFILE="$WARP_YG_BASE/warp-ipv6-1/warp-yg-profile.conf"
+  WARP6_2_PROFILE="$WARP_YG_BASE/warp-ipv6-2/warp-yg-profile.conf"
+  WARP4_1_SINGBOX="$WARP_YG_BASE/warp-ipv4-1/warp-yg-singbox.json"
+  WARP4_2_SINGBOX="$WARP_YG_BASE/warp-ipv4-2/warp-yg-singbox.json"
+  WARP6_1_SINGBOX="$WARP_YG_BASE/warp-ipv6-1/warp-yg-singbox.json"
+  WARP6_2_SINGBOX="$WARP_YG_BASE/warp-ipv6-2/warp-yg-singbox.json"
+elif [[ "$WARP_TOOL" == "warp-go" ]]; then
   WARP4_1_PROFILE="$WARP_GO_BASE/warp-ipv4-1/warp-go-profile.conf"
   WARP4_2_PROFILE="$WARP_GO_BASE/warp-ipv4-2/warp-go-profile.conf"
   WARP6_1_PROFILE="$WARP_GO_BASE/warp-ipv6-1/warp-go-profile.conf"
@@ -461,7 +671,7 @@ WARP4_2_RESERVED="0, 0, 0"
 WARP6_1_RESERVED="0, 0, 0"
 WARP6_2_RESERVED="0, 0, 0"
 
-if [[ "$WARP_TOOL" == "warp-go" ]]; then
+if [[ "$WARP_TOOL" == "warp-yg" || "$WARP_TOOL" == "warp-go" ]]; then
   WARP4_1_RESERVED="$(json_reserved "$WARP4_1_SINGBOX")"
   WARP4_2_RESERVED="$(json_reserved "$WARP4_2_SINGBOX")"
   WARP6_1_RESERVED="$(json_reserved "$WARP6_1_SINGBOX")"
