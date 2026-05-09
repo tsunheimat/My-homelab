@@ -13,6 +13,7 @@ WARP_YG_ACCOUNT_SOURCE="${WARP_YG_ACCOUNT_SOURCE:-auto}"
 WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
+SNI_DOMAIN_COUNT="${SNI_DOMAIN_COUNT:-}"
 WARP_INTERFACE_COUNT="${WARP_INTERFACE_COUNT:-}"
 WARP_PROFILES_PER_INTERFACE="${WARP_PROFILES_PER_INTERFACE:-}"
 EGRESS_INTERFACE_COUNT="${EGRESS_INTERFACE_COUNT:-}"
@@ -38,6 +39,7 @@ declare -A WARP_PEERS
 declare -A WARP_ENDPOINTS
 declare -A WARP_PORTS
 declare -A WARP_RESERVED
+declare -a SNI_DOMAINS
 declare -a EGRESS_INTERFACE_OPTIONS
 
 die() {
@@ -240,6 +242,43 @@ interface_ipv4_cidr() {
   local interface="$1"
 
   ip -o -4 addr show dev "$interface" scope global | awk 'NR == 1 { print $4; exit }'
+}
+
+interface_ipv6_gateway() {
+  local interface="$1"
+
+  ip -6 route show default | awk -v iface="$interface" '
+    $1 == "default" {
+      via = ""
+      dev = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i == "via") {
+          via = $(i + 1)
+        } else if ($i == "dev") {
+          dev = $(i + 1)
+        }
+      }
+      if (dev == iface && via != "") {
+        print via
+        exit
+      }
+    }
+    $1 == "nexthop" {
+      via = ""
+      dev = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i == "via") {
+          via = $(i + 1)
+        } else if ($i == "dev") {
+          dev = $(i + 1)
+        }
+      }
+      if (dev == iface && via != "") {
+        print via
+        exit
+      }
+    }
+  '
 }
 
 ipv4_to_int() {
@@ -450,6 +489,22 @@ secondary_vnic_ipv4_source() {
   printf '%s' "$value"
 }
 
+secondary_vnic_ipv6_source() {
+  local index="$1"
+  local interface="$2"
+  local ipv6_var egress_ipv6_var value
+
+  ipv6_var="SECONDARY_VNIC_${index}_IPV6"
+  egress_ipv6_var="EGRESS_${index}_IPV6"
+  value="${!ipv6_var-}"
+  [[ -n "$value" ]] || value="${!egress_ipv6_var-}"
+  if [[ -z "$value" && "$index" == "2" ]]; then
+    value="${SECONDARY_VNIC_IPV6:-}"
+  fi
+  [[ -n "$value" ]] || value="$(interface_address 6 "$interface" || true)"
+  printf '%s' "${value%/*}"
+}
+
 secondary_vnic_interface() {
   local index="$1"
   local secondary_var egress_var interface
@@ -472,6 +527,18 @@ secondary_vnic_gateway_override() {
   value="${!gateway_var-}"
   if [[ -z "$value" && "$index" == "2" ]]; then
     value="${SECONDARY_VNIC_GATEWAY:-}"
+  fi
+  printf '%s' "$value"
+}
+
+secondary_vnic_ipv6_gateway_override() {
+  local index="$1"
+  local gateway_var value
+
+  gateway_var="SECONDARY_VNIC_${index}_IPV6_GATEWAY"
+  value="${!gateway_var-}"
+  if [[ -z "$value" && "$index" == "2" ]]; then
+    value="${SECONDARY_VNIC_IPV6_GATEWAY:-}"
   fi
   printf '%s' "$value"
 }
@@ -541,7 +608,8 @@ detected_secondary_vnic_interfaces() {
 secondary_vnic_entry_yaml() {
   local index="$1"
   local selected_interface="${2:-}"
-  local interface ipv4_source ipv4 gateway table priority prompt_var
+  local interface ipv4_source ipv4 ipv6 gateway gateway6 table priority prompt_var
+  local ipv6_route_yaml ipv6_policy_yaml
 
   interface="$selected_interface"
   [[ -n "$interface" ]] || interface="$(secondary_vnic_interface "$index")"
@@ -576,6 +644,29 @@ secondary_vnic_entry_yaml() {
   validate_positive_integer "$table" "SECONDARY_VNIC_${index}_TABLE"
   validate_positive_integer "$priority" "SECONDARY_VNIC_${index}_PRIORITY"
 
+  ipv6="$(secondary_vnic_ipv6_source "$index" "$interface")"
+  gateway6="$(secondary_vnic_ipv6_gateway_override "$index")"
+  [[ -n "$gateway6" ]] || gateway6="$(interface_ipv6_gateway "$interface" || true)"
+  ipv6_route_yaml=""
+  ipv6_policy_yaml=""
+  if [[ -n "$ipv6" && -n "$gateway6" ]]; then
+    ipv6_route_yaml="$(cat <<EOF
+        - to: default
+          via: $gateway6
+          table: $table
+          on-link: true
+EOF
+)"
+    ipv6_policy_yaml="$(cat <<EOF
+        - from: $ipv6/128
+          table: $table
+          priority: $priority
+EOF
+)"
+  else
+    echo "WARNING: Could not detect IPv6 source/gateway for $interface; writing IPv4 policy routing only." >&2
+  fi
+
   cat <<EOF
     $interface:
       dhcp4: true
@@ -585,55 +676,102 @@ secondary_vnic_entry_yaml() {
         - to: default
           via: $gateway
           table: $table
+$ipv6_route_yaml
       routing-policy:
         - from: $ipv4/32
           table: $table
           priority: $priority
+$ipv6_policy_yaml
 EOF
 
-  echo "Secondary interface $index: $interface, IPv4 $ipv4, gateway $gateway, table $table, priority $priority" >&2
+  if [[ -n "$ipv6" && -n "$gateway6" ]]; then
+    echo "Secondary interface $index: $interface, IPv4 $ipv4 via $gateway, IPv6 $ipv6 via $gateway6, table $table, priority $priority" >&2
+  else
+    echo "Secondary interface $index: $interface, IPv4 $ipv4 via $gateway, table $table, priority $priority" >&2
+  fi
+}
+
+primary_vnic_ipv6_entry_yaml() {
+  local index=1
+  local interface ipv6 gateway6 table priority
+
+  interface="${EGRESS_IFACES[$index]-}"
+  [[ -n "$interface" ]] || interface="$(default_egress_interface "$index")"
+  [[ -n "$interface" ]] || return 0
+  interface="$(normalize_interface_name "$interface")"
+
+  ipv6="$(secondary_vnic_ipv6_source "$index" "$interface")"
+  gateway6="$(secondary_vnic_ipv6_gateway_override "$index")"
+  [[ -n "$gateway6" ]] || gateway6="$(interface_ipv6_gateway "$interface" || true)"
+  if [[ -z "$ipv6" || -z "$gateway6" ]]; then
+    echo "WARNING: Could not detect primary IPv6 source/gateway for $interface; skipping primary IPv6 policy routing." >&2
+    return 0
+  fi
+
+  table="$(secondary_vnic_table "$index")"
+  priority="$(secondary_vnic_priority "$index")"
+  validate_positive_integer "$table" "SECONDARY_VNIC_${index}_TABLE"
+  validate_positive_integer "$priority" "SECONDARY_VNIC_${index}_PRIORITY"
+
+  cat <<EOF
+    $interface:
+      routes:
+        - to: default
+          via: $gateway6
+          table: $table
+          on-link: true
+      routing-policy:
+        - from: $ipv6/128
+          table: $table
+          priority: $priority
+EOF
+
+  echo "Primary interface $index: $interface, IPv6 $ipv6 via $gateway6, table $table, priority $priority" >&2
 }
 
 write_secondary_vnic_netplan() {
-  local count index backup_path entries iface
+  local count index backup_path entries primary_entry secondary_entries iface
   local -a unique_indexes detected_ifaces
 
   count="${SECONDARY_VNIC_COUNT:-${WARP_INTERFACE_COUNT:-2}}"
   [[ -n "$count" ]] || prompt count "How many total VNICs" "2"
   validate_positive_integer "$count" "SECONDARY_VNIC_COUNT"
-  ((count >= 2)) || die "At least 2 total VNICs are required to write secondary VNIC netplan"
+  ((count >= 2)) || die "At least 2 total VNICs are required to write VNIC policy netplan"
   validate_positive_integer "$SECONDARY_VNIC_TABLE_BASE" "SECONDARY_VNIC_TABLE_BASE"
   validate_positive_integer "$SECONDARY_VNIC_PRIORITY_BASE" "SECONDARY_VNIC_PRIORITY_BASE"
 
   load_egress_bindings
+  primary_entry="$(primary_vnic_ipv6_entry_yaml)"
   mapfile -t unique_indexes < <(unique_secondary_egress_indexes)
-  entries=""
+  secondary_entries=""
   for index in "${unique_indexes[@]}"; do
     ((index <= count)) || continue
-    entries+="${entries:+$'\n'}$(secondary_vnic_entry_yaml "$index")"
+    secondary_entries+="${secondary_entries:+$'\n'}$(secondary_vnic_entry_yaml "$index")"
   done
 
-  if [[ -z "$entries" ]]; then
+  if [[ -z "$secondary_entries" ]]; then
     mapfile -t detected_ifaces < <(detected_secondary_vnic_interfaces)
     index=2
     for iface in "${detected_ifaces[@]}"; do
       ((index <= count)) || break
-      entries+="${entries:+$'\n'}$(secondary_vnic_entry_yaml "$index" "$iface")"
+      secondary_entries+="${secondary_entries:+$'\n'}$(secondary_vnic_entry_yaml "$index" "$iface")"
       ((index++))
     done
   fi
 
-  if [[ -z "$entries" ]]; then
-    echo "No unique secondary VNIC interfaces found; no secondary netplan was written."
+  if [[ -z "$primary_entry" && -z "$secondary_entries" ]]; then
+    echo "No VNIC interfaces with usable policy-routing data found; no netplan was written."
     echo "Set SECONDARY_VNIC_2_INTERFACE=enp1s0 if the secondary NIC is not detectable with ip link."
     return 0
   fi
+  entries="$primary_entry"
+  entries+="${entries:+$'\n'}$secondary_entries"
 
   if [[ -f "$SECONDARY_NETPLAN_PATH" ]]; then
     backup_path="$SECONDARY_NETPLAN_PATH.bak-$(date +%Y%m%d-%H%M%S)"
     cp "$SECONDARY_NETPLAN_PATH" "$backup_path"
     chmod 600 "$backup_path"
-    echo "Backed up old secondary netplan to $backup_path"
+    echo "Backed up old VNIC policy netplan to $backup_path"
   fi
 
   umask 077
@@ -645,7 +783,7 @@ $entries
 EOF
 
   chmod 600 "$SECONDARY_NETPLAN_PATH"
-  echo "Wrote secondary VNIC netplan to $SECONDARY_NETPLAN_PATH"
+  echo "Wrote VNIC policy netplan to $SECONDARY_NETPLAN_PATH"
 }
 
 load_egress_bindings() {
@@ -1259,14 +1397,11 @@ make_warp_profile() {
   fi
 }
 
-config_acme_domain() {
-  local index="$1"
-
+config_acme_domains() {
   [[ -f "$CONFIG_PATH" ]] || return 0
-  awk -v target="$index" '
+  awk '
     /"domain"[[:space:]]*:[[:space:]]*\[/ {
       in_domain = 1
-      count = 0
       next
     }
     in_domain && /"/ {
@@ -1274,17 +1409,379 @@ config_acme_domain() {
       sub(/^[[:space:]]*"/, "", line)
       sub(/".*/, "", line)
       if (line != "") {
-        count++
-        if (count == target) {
-          print line
-          exit
-        }
+        print line
       }
     }
     in_domain && /\]/ {
       in_domain = 0
     }
   ' "$CONFIG_PATH"
+}
+
+config_acme_domain() {
+  local index="$1"
+  local domain current=0
+
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  while IFS= read -r domain; do
+    [[ -n "$domain" ]] || continue
+    ((current++))
+    if [[ "$current" == "$index" ]]; then
+      printf '%s' "$domain"
+      return 0
+    fi
+  done < <(config_acme_domains)
+}
+
+sni_domain_count() {
+  local index max=0
+
+  for index in "${!SNI_DOMAINS[@]}"; do
+    [[ "$index" =~ ^[0-9]+$ ]] || continue
+    [[ -n "${SNI_DOMAINS[$index]-}" ]] || continue
+    ((index > max)) && max="$index"
+  done
+
+  printf '%s' "$max"
+}
+
+sni_domain_interface_count() {
+  local -a unique_ifaces
+  local count
+
+  if [[ "${EGRESS_INTERFACE_COUNT:-}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s' "$EGRESS_INTERFACE_COUNT"
+    return 0
+  fi
+
+  mapfile -t unique_ifaces < <(config_unique_bind_interfaces)
+  if ((${#unique_ifaces[@]} > 0)); then
+    printf '%s' "${#unique_ifaces[@]}"
+    return 0
+  fi
+
+  if [[ "${WARP_INTERFACE_COUNT:-}" =~ ^[1-9][0-9]*$ && "${WARP_PROFILES_PER_INTERFACE:-}" =~ ^[1-9][0-9]*$ ]]; then
+    count=$((WARP_INTERFACE_COUNT / WARP_PROFILES_PER_INTERFACE))
+    if ((count > 0)); then
+      printf '%s' "$count"
+      return 0
+    fi
+  fi
+
+  if [[ "${WARP_INTERFACE_COUNT:-}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s' "$WARP_INTERFACE_COUNT"
+    return 0
+  fi
+
+  printf '1'
+}
+
+sni_domain_max() {
+  local interface_count
+
+  interface_count="$(sni_domain_interface_count)"
+  printf '%s' "$((interface_count * 2))"
+}
+
+sni_domain_label() {
+  local index="$1"
+  local interface_index
+
+  if ((index == 1)); then
+    printf 'Primary IPv4/SNI domain'
+    return 0
+  fi
+
+  if ((index == 2)); then
+    printf 'Primary IPv6/SNI domain'
+    return 0
+  fi
+
+  interface_index=$(((index + 1) / 2))
+  if ((index % 2 == 1)); then
+    printf 'Interface %s IPv4/SNI domain' "$interface_index"
+  else
+    printf 'Interface %s IPv6/SNI domain' "$interface_index"
+  fi
+}
+
+sni_domain_summary() {
+  local index count summary="" domain
+
+  count="$(sni_domain_count)"
+  for ((index = 1; index <= count; index++)); do
+    domain="${SNI_DOMAINS[$index]-}"
+    [[ -n "$domain" ]] || continue
+    if [[ -n "$summary" ]]; then
+      summary+=", "
+    fi
+    summary+="$domain"
+    if ((index >= 4 && index < count)); then
+      summary+=", ..."
+      break
+    fi
+  done
+
+  printf '%s' "$summary"
+}
+
+sni_default_base_domain() {
+  local domain
+
+  domain="${SNI_DOMAINS[1]-}"
+  [[ -n "$domain" ]] || domain="$(config_acme_domain 1)"
+  [[ -n "$domain" ]] || domain="$(config_json_value "server_name")"
+
+  if [[ "$domain" == *.* ]]; then
+    domain="${domain#*.}"
+  else
+    domain=""
+  fi
+
+  domain="${domain#.}"
+  domain="${domain%.}"
+  printf '%s' "$domain"
+}
+
+sni_default_hostname() {
+  local domain label
+
+  domain="${SNI_DOMAINS[1]-}"
+  [[ -n "$domain" ]] || domain="$(config_acme_domain 1)"
+  [[ -n "$domain" ]] || domain="$(config_json_value "server_name")"
+
+  label="${domain%%.*}"
+  label="${label%-v6}"
+  if [[ "$label" =~ ^(.+)-[0-9]+$ ]]; then
+    label="${BASH_REMATCH[1]}"
+  fi
+
+  printf '%s' "$label"
+}
+
+sync_primary_sni_domains() {
+  DOMAIN_V4="${SNI_DOMAINS[1]-}"
+  DOMAIN_V6="${SNI_DOMAINS[2]-}"
+}
+
+load_sni_domains_from_config() {
+  local domain index=1
+
+  SNI_DOMAINS=()
+
+  while IFS= read -r domain; do
+    [[ -n "$domain" ]] || continue
+    SNI_DOMAINS[$index]="$domain"
+    ((index++))
+  done < <(config_acme_domains)
+
+  if ((index == 1)); then
+    domain="$(config_json_value "server_name")"
+    [[ -n "$domain" ]] && SNI_DOMAINS[1]="$domain"
+  fi
+
+  if [[ -z "${SNI_DOMAINS[2]-}" ]]; then
+    domain="$(config_acme_domain 2)"
+    [[ -n "$domain" ]] && SNI_DOMAINS[2]="$domain"
+  fi
+
+  sync_primary_sni_domains
+}
+
+load_sni_domains_from_env() {
+  local index domain_var domain
+
+  [[ "${SNI_DOMAIN_COUNT:-}" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  for ((index = 1; index <= SNI_DOMAIN_COUNT; index++)); do
+    domain_var="SNI_DOMAIN_$index"
+    domain="${!domain_var-}"
+    [[ -n "$domain" ]] || continue
+    SNI_DOMAINS[$index]="$domain"
+  done
+
+  sync_primary_sni_domains
+}
+
+ensure_sni_domains() {
+  local index max count domain
+
+  if [[ -n "${DOMAIN_V4:-}" && -z "${SNI_DOMAINS[1]-}" ]]; then
+    SNI_DOMAINS[1]="$DOMAIN_V4"
+  fi
+  if [[ -n "${DOMAIN_V6:-}" && -z "${SNI_DOMAINS[2]-}" ]]; then
+    SNI_DOMAINS[2]="$DOMAIN_V6"
+  fi
+
+  count="$(sni_domain_count)"
+  if [[ -z "${SNI_DOMAIN_COUNT:-}" || ! "$SNI_DOMAIN_COUNT" =~ ^[1-9][0-9]*$ || "$SNI_DOMAIN_COUNT" -lt "$count" ]]; then
+    SNI_DOMAIN_COUNT="$count"
+  fi
+  if ((SNI_DOMAIN_COUNT < 2)); then
+    SNI_DOMAIN_COUNT=2
+  fi
+
+  max="$(sni_domain_max)"
+  validate_positive_integer "$max" "SNI domain max"
+  ((SNI_DOMAIN_COUNT <= max)) || die "SNI domain count must be between 2 and $max (2 per egress interface)"
+
+  for ((index = 1; index <= SNI_DOMAIN_COUNT; index++)); do
+    domain="${SNI_DOMAINS[$index]-}"
+    [[ -n "$domain" ]] || die "Missing SNI domain $index"
+  done
+
+  for index in "${!SNI_DOMAINS[@]}"; do
+    [[ "$index" =~ ^[0-9]+$ ]] || continue
+    ((index <= SNI_DOMAIN_COUNT)) || unset "SNI_DOMAINS[$index]"
+  done
+
+  sync_primary_sni_domains
+}
+
+prompt_sni_domain_count() {
+  local max="$1"
+  local default_count="$2"
+  local value
+
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=2
+  ((max >= 2)) || max=2
+  [[ "$default_count" =~ ^[1-9][0-9]*$ ]] || default_count=2
+  ((default_count >= 2)) || default_count=2
+  ((default_count <= max)) || default_count="$max"
+
+  read -r -p "How many SNI/ACME domains (2-$max) [$default_count]: " value
+  value="${value:-$default_count}"
+  validate_positive_integer "$value" "SNI domain count"
+  ((value >= 2 && value <= max)) || die "SNI domain count must be between 2 and $max"
+  SNI_DOMAIN_COUNT="$value"
+}
+
+prompt_sni_domains() {
+  local max="$1"
+  local default_count="$2"
+  local index default_value prompt_var
+
+  prompt_sni_domain_count "$max" "$default_count"
+
+  for ((index = 1; index <= SNI_DOMAIN_COUNT; index++)); do
+    default_value="${SNI_DOMAINS[$index]-}"
+    if [[ -z "$default_value" ]]; then
+      case "$index" in
+        1) default_value="${DOMAIN_V4:-xxx.com}" ;;
+        2) default_value="${DOMAIN_V6:-xxx-v6.com}" ;;
+      esac
+    fi
+    prompt_var="SNI_DOMAIN_$index"
+    if [[ -n "$default_value" ]]; then
+      prompt "$prompt_var" "$(sni_domain_label "$index")" "$default_value"
+    else
+      prompt "$prompt_var" "$(sni_domain_label "$index")"
+    fi
+    SNI_DOMAINS[$index]="${!prompt_var}"
+  done
+
+  for index in "${!SNI_DOMAINS[@]}"; do
+    [[ "$index" =~ ^[0-9]+$ ]] || continue
+    ((index <= SNI_DOMAIN_COUNT)) || unset "SNI_DOMAINS[$index]"
+  done
+
+  sync_primary_sni_domains
+}
+
+prompt_sni_domains_from_hostname() {
+  local max="$1"
+  local interface_count index domain_index
+  local SNI_BASE_DOMAIN SNI_HOSTNAME
+
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=2
+  ((max >= 2)) || max=2
+  interface_count=$((max / 2))
+  ((interface_count >= 1)) || interface_count=1
+
+  prompt SNI_BASE_DOMAIN "SNI base domain" "$(sni_default_base_domain)"
+  SNI_BASE_DOMAIN="${SNI_BASE_DOMAIN#.}"
+  SNI_BASE_DOMAIN="${SNI_BASE_DOMAIN%.}"
+  [[ -n "$SNI_BASE_DOMAIN" ]] || die "SNI base domain is required"
+
+  prompt SNI_HOSTNAME "SNI hostname" "$(sni_default_hostname)"
+  SNI_HOSTNAME="${SNI_HOSTNAME#.}"
+  SNI_HOSTNAME="${SNI_HOSTNAME%.}"
+  [[ -n "$SNI_HOSTNAME" ]] || die "SNI hostname is required"
+
+  SNI_DOMAIN_COUNT="$((interface_count * 2))"
+  SNI_DOMAINS=()
+
+  for ((index = 1; index <= interface_count; index++)); do
+    SNI_DOMAINS[$index]="$SNI_HOSTNAME-$index.$SNI_BASE_DOMAIN"
+  done
+
+  for ((index = 1; index <= interface_count; index++)); do
+    domain_index=$((interface_count + index))
+    SNI_DOMAINS[$domain_index]="$SNI_HOSTNAME-$index-v6.$SNI_BASE_DOMAIN"
+  done
+
+  sync_primary_sni_domains
+}
+
+prompt_sni_domains_menu() {
+  local max="$1"
+  local default_count="$2"
+  local choice
+
+  echo
+  echo "SNI/ACME domain input mode:"
+  echo "1. Manual domain input"
+  echo "2. Generate from base domain + hostname"
+  read -r -p "Choice [1]: " choice
+  choice="${choice:-1}"
+
+  case "$choice" in
+    1)
+      prompt_sni_domains "$max" "$default_count"
+      ;;
+    2)
+      prompt_sni_domains_from_hostname "$max"
+      ;;
+    *)
+      die "Invalid SNI/ACME domain input mode"
+      ;;
+  esac
+}
+
+render_sni_domain_array() {
+  local index domain
+
+  for ((index = 1; index <= SNI_DOMAIN_COUNT; index++)); do
+    domain="${SNI_DOMAINS[$index]}"
+    if ((index > 1)); then
+      echo ","
+    fi
+    printf '            "%s"' "$(json_escape "$domain")"
+  done
+  echo
+}
+
+proxy_sni_name() {
+  local base_name="$1"
+  local index="$2"
+  local interface_index
+
+  if ((index == 1)); then
+    printf '%s' "$base_name"
+    return 0
+  fi
+
+  if ((index == 2)); then
+    printf '%s-v6' "$base_name"
+    return 0
+  fi
+
+  interface_index=$(((index + 1) / 2))
+  if ((index % 2 == 1)); then
+    printf '%s-if%s' "$base_name" "$interface_index"
+  else
+    printf '%s-if%s-v6' "$base_name" "$interface_index"
+  fi
 }
 
 require_base_commands() {
@@ -1738,14 +2235,15 @@ EOF
 }
 
 write_singbox_config() {
-  local domain_v4_json domain_v6_json acme_email_json cf_token_json backup_path
+  local server_name_json acme_domains_json acme_email_json cf_token_json backup_path
   local endpoints_json users_json outbounds_json route_rules_json
 
+  ensure_sni_domains
   ensure_warp_profile_state
   load_egress_bindings
 
-  domain_v4_json="$(json_escape "$DOMAIN_V4")"
-  domain_v6_json="$(json_escape "$DOMAIN_V6")"
+  server_name_json="$(json_escape "${SNI_DOMAINS[1]}")"
+  acme_domains_json="$(render_sni_domain_array)"
   acme_email_json="$(json_escape "$ACME_EMAIL")"
   cf_token_json="$(json_escape "$CF_TOKEN")"
   endpoints_json="$(render_warp_endpoints)"
@@ -1790,11 +2288,10 @@ $users_json
       ],
       "tls": {
         "enabled": true,
-        "server_name": "$domain_v4_json",
+        "server_name": "$server_name_json",
         "acme": {
           "domain": [
-            "$domain_v4_json",
-            "$domain_v6_json"
+$acme_domains_json
           ],
           "email": "$acme_email_json",
           "dns01_challenge": {
@@ -1828,22 +2325,17 @@ EOF
 }
 
 print_proxy_information() {
-  local country node_name node_name_v6 server sni_name server_index family kind index user_name password display_index
+  local country node_name server sni_name server_index family kind index user_name password display_index
 
+  ensure_sni_domains
   prompt country "Country"
   prompt node_name "Node name"
-  node_name_v6="${node_name}-v6"
 
   echo
   echo "Proxy information:"
-  for server_index in 1 2; do
-    if [[ "$server_index" == "1" ]]; then
-      server="$DOMAIN_V4"
-      sni_name="$node_name"
-    else
-      server="$DOMAIN_V6"
-      sni_name="$node_name_v6"
-    fi
+  for ((server_index = 1; server_index <= SNI_DOMAIN_COUNT; server_index++)); do
+    server="${SNI_DOMAINS[$server_index]}"
+    sni_name="$(proxy_sni_name "$node_name" "$server_index")"
     for family in 4 6; do
       for kind in direct warp; do
         for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
@@ -1866,14 +2358,14 @@ regenerate_all_warp_profiles() {
 }
 
 prepare_new_config_inputs() {
-  local existing_interface_count default_domain_v4 default_domain_v6
-  local default_egress_interface_count default_profiles_per_interface
+  local existing_interface_count existing_domain_count domain_max
+  local default_egress_interface_count default_profiles_per_interface default_domain_count
   local -a existing_ifaces
 
   existing_interface_count="$(config_interface_count)"
   mapfile -t existing_ifaces < <(config_unique_bind_interfaces)
-  default_domain_v4="${DOMAIN_V4:-xxx.com}"
-  default_domain_v6="${DOMAIN_V6:-xxx-v6.com}"
+  existing_domain_count="$(sni_domain_count)"
+  default_domain_count="${SNI_DOMAIN_COUNT:-$existing_domain_count}"
   default_egress_interface_count="${EGRESS_INTERFACE_COUNT:-${#existing_ifaces[@]}}"
   if [[ ! "$default_egress_interface_count" =~ ^[1-9][0-9]*$ ]]; then
     default_egress_interface_count="2"
@@ -1885,14 +2377,14 @@ prepare_new_config_inputs() {
   fi
   [[ -n "$default_profiles_per_interface" ]] || default_profiles_per_interface="1"
 
-  prompt DOMAIN_V4 "IPv4/SNI domain" "$default_domain_v4"
-  prompt DOMAIN_V6 "IPv6/SNI domain" "$default_domain_v6"
-  prompt ACME_EMAIL "ACME email" "$ACME_EMAIL"
-  prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$CF_TOKEN" true
   prompt WARP_PROFILES_PER_INTERFACE "WARP profiles per egress interface" "$default_profiles_per_interface"
   validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP profiles per egress interface"
   prompt EGRESS_INTERFACE_COUNT "How many egress interfaces" "$default_egress_interface_count"
   validate_positive_integer "$EGRESS_INTERFACE_COUNT" "Egress interface count"
+  domain_max="$((EGRESS_INTERFACE_COUNT * 2))"
+  prompt_sni_domains_menu "$domain_max" "$default_domain_count"
+  prompt ACME_EMAIL "ACME email" "$ACME_EMAIL"
+  prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$CF_TOKEN" true
   configure_generated_egress_interfaces "$EGRESS_INTERFACE_COUNT" "$WARP_PROFILES_PER_INTERFACE"
 }
 
@@ -1906,8 +2398,7 @@ generate_new_config() {
 }
 
 change_sni() {
-  prompt DOMAIN_V4 "IPv4/SNI domain" "$DOMAIN_V4"
-  prompt DOMAIN_V6 "IPv6/SNI domain" "$DOMAIN_V6"
+  prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
   write_singbox_config
   echo "SNI updated."
 }
@@ -1973,17 +2464,16 @@ main_menu() {
   while true; do
     echo
     echo "==== Sing-box HY2 + WARP Menu ===="
-    echo "Current IPv4/SNI: $DOMAIN_V4"
-    echo "Current IPv6/SNI: $DOMAIN_V6"
+    echo "Current SNI domains ($(sni_domain_count)): $(sni_domain_summary)"
     echo "Current WARP slot total: $WARP_INTERFACE_COUNT"
     echo "Current WARP mode: $CURRENT_WARP_FLAVOR"
     echo "1. 重新生成密碼"
     echo "2. 重新生成所有 WARP"
     echo "3. 重新生成指定的 WARP"
-    echo "4. 改變 SNI"
+    echo "4. 改變 SNI domains"
     echo "5. 輸出 proxy information"
     echo "6. 生成新的 config"
-    echo "7. 寫入 secondary VNIC netplan"
+    echo "7. 寫入 VNIC policy netplan"
     echo "0. 退出"
     read -r -p "Choice: " choice
 
@@ -2024,25 +2514,28 @@ main_menu() {
 }
 
 load_initial_state() {
-  local existing_domain_v4 existing_domain_v6 existing_email existing_token existing_interface_count
+  local existing_email existing_token existing_interface_count
 
-  existing_domain_v4="$(config_json_value "server_name")"
-  existing_domain_v6="$(config_acme_domain 2)"
+  load_sni_domains_from_config
+  load_sni_domains_from_env
   existing_email="$(config_json_value "email")"
   existing_token="$(config_json_value "api_token")"
   existing_interface_count="$(config_interface_count)"
 
-  DOMAIN_V4="$existing_domain_v4"
-  DOMAIN_V6="$existing_domain_v6"
   ACME_EMAIL="$existing_email"
   CF_TOKEN="$existing_token"
 
-  [[ -n "$DOMAIN_V4" ]] || prompt DOMAIN_V4 "IPv4/SNI domain" "xxx.com"
-  [[ -n "$DOMAIN_V6" ]] || prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
-  [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
-  [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
   [[ -n "$WARP_INTERFACE_COUNT" ]] || WARP_INTERFACE_COUNT="${existing_interface_count:-2}"
   validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP slot count"
+
+  if [[ -z "${SNI_DOMAINS[1]-}" || -z "${SNI_DOMAINS[2]-}" ]]; then
+    prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
+  fi
+  SNI_DOMAIN_COUNT="$(sni_domain_count)"
+  ((SNI_DOMAIN_COUNT >= 2)) || SNI_DOMAIN_COUNT=2
+  sync_primary_sni_domains
+  [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
+  [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
 
   load_passwords_from_config
   CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
