@@ -1170,6 +1170,29 @@ detect_warp_tool() {
   esac
 }
 
+report_warp_generator_status() {
+  case "$CURRENT_WARP_FLAVOR" in
+    warp-yg | warp-go)
+      if [[ -x "$WARP_GO_BIN" ]]; then
+        echo "WARP generator ready: warp-go at $WARP_GO_BIN"
+      elif [[ "$AUTO_DOWNLOAD_WARP_TOOLS" == "true" ]]; then
+        echo "WARNING: warp-go is not available at $WARP_GO_BIN; it will be downloaded before WARP generation."
+      else
+        echo "WARNING: warp-go is not available at $WARP_GO_BIN. Set WARP_GO_BIN or enable AUTO_DOWNLOAD_WARP_TOOLS before regenerating WARP."
+      fi
+      ;;
+    wgcf)
+      if [[ -x "$WGCF_BIN" ]]; then
+        echo "WARP generator ready: wgcf at $WGCF_BIN"
+      elif [[ "$AUTO_DOWNLOAD_WARP_TOOLS" == "true" ]]; then
+        echo "WARNING: wgcf is not available at $WGCF_BIN; it will be downloaded before WARP generation."
+      else
+        echo "WARNING: wgcf is not available at $WGCF_BIN. Set WGCF_BIN or enable AUTO_DOWNLOAD_WARP_TOOLS before regenerating WARP."
+      fi
+      ;;
+  esac
+}
+
 make_warp_profile() {
   local tag="$1"
   local dir profile singbox_profile
@@ -2023,6 +2046,7 @@ load_initial_state() {
 
   load_passwords_from_config
   CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
+  report_warp_generator_status
 
   if load_warp_profile_state "$CURRENT_WARP_FLAVOR"; then
     echo "Loaded existing WARP profiles from $CURRENT_WARP_FLAVOR."
