@@ -16,9 +16,9 @@ Menu option `6` asks how many WARP profiles to create per egress interface. For 
 
 When the generator asks for an egress interface, it prints a numbered interface list. Numeric input means that displayed list number, not the Linux link index from `ip link`.
 
-The script now uses the yonggekkk `warp-yg` generation flow by default for WARP config creation, then exports WireGuard and Sing-box profile data with `warp-go`. It can still be forced to the older `warp-go` or `wgcf` modes with `WARP_TOOL`.
+The script now uses the upstream API first and falls back to the `warp-api` helper for WARP account creation, then exports WireGuard and Sing-box profile data with `warp-go`. It can still be forced to the older direct `warp-go --register` or `wgcf` modes with `WARP_TOOL`.
 
-If `https://api.zeroteam.top/warp?format=warp-go` returns `503`, the script automatically switches to the `warp-yg` fallback generator for the rest of that run.
+Direct `warp-go --register` can fail with Cloudflare error `1070` on current `warp-go` builds. The upstream `warp-yg` option 1 does not start with direct registration; it downloads a ready `warp.conf` from the upstream API and falls back to the same `warp-api` helper used by option 3.
 
 ## What The Script Does
 
@@ -99,7 +99,7 @@ Each proxy information run prints `4 * SNI_DOMAIN_COUNT * WARP_INTERFACE_COUNT` 
 
 ## Default warp-yg
 
-This is the default and uses the yonggekkk `warp-yg` account/config flow:
+This is the default profile layout. It writes files under `/root/warp-yg`, while account registration uses `WARP_YG_ACCOUNT_SOURCE`:
 
 ```bash
 WARP_TOOL=warp-yg /etc/sing-box/warp-singbox.sh
@@ -157,9 +157,18 @@ WARP_GO_BIN=/custom/path/warp-go WARP_YG_BASE=/custom/warp-yg /etc/sing-box/warp
 | `WARP_GO_BIN` | `/root/warp-go/warp-go` | `warp-go` binary path |
 | `WARP_GO_BASE` | `/root/warp-go` | Directory for generated `warp-go` profiles |
 | `WARP_YG_BASE` | `/root/warp-yg` | Directory for generated `warp-yg` profiles |
-| `WARP_YG_ACCOUNT_SOURCE` | `auto` | `auto`, `zeroteam`, or `warpapi` account generation source |
-| `WARP_YG_REPO_URL` | `https://github.com/yonggekkk/warp-yg.git` | `warp-yg` generator repo URL |
-| `WARP_YG_REPO_DIR` | `/root/warp-yg/source` | Local checkout for the `warp-yg` generator repo |
+| `WARP_YG_ACCOUNT_SOURCE` | `auto` | Account generation source. `auto` tries the upstream API then the helper; `warpapi`/`3` uses the upstream helper; `upstream`/`1` tries the upstream API then the helper; `direct` or `warp-go` uses direct `warp-go --register` |
+| `WARP_YG_API_URL` | `https://api.zeroteam.top/warp?format=warp-go` | Upstream method-1 API URL |
+| `WARP_YG_HELPER_URL_BASE` | `https://gitlab.com/rwkgyg/CFwarp/-/raw/main/point/cpu1` | Upstream `warp-api` helper URL base |
+| `WARP_YG_ACCOUNT_RETRIES` | `5` | Number of helper account-generation attempts before failing |
+| `WARP_YG_ACCOUNT_RETRY_DELAY` | `8` | Initial seconds to wait between helper retries; retries use exponential backoff |
+| `WARP_YG_ACCOUNT_RETRY_MAX_DELAY` | `60` | Maximum seconds to wait between helper retries |
+| `WARP_YG_ACCOUNT_MIN_INTERVAL` | `5` | Minimum seconds between WARP account requests during bulk regeneration |
+| `WARP_YG_DIRECT_FALLBACK` | `false` | Set to `true` to let `auto` fall back to direct `warp-go --register` after API/helper failure |
+| `WARP_REGISTER_INTERFACE` | unset | Optional curl interface or source address for upstream API/helper downloads |
+| `WARP_REGISTER_IP_VERSION` | unset | Optional curl IP family for upstream API/helper downloads: `4` or `6` |
+| `WARP_REGISTER_PROXY` | unset | Optional HTTP/SOCKS proxy for upstream API/helper downloads and commands that honor proxy environment variables |
+| `WARP_REGISTER_COMMAND_PREFIX` | unset | Optional command prefix for registration commands, for example `ip netns exec warp-reg` or `ip vrf exec blue` |
 | `WGCF_BIN` | `/root/wgcf/wgcf` | `wgcf` binary path |
 | `WGCF_BASE` | `/root/wgcf` | Directory for generated `wgcf` profiles |
 | `LISTEN_PORT` | `443` | Hysteria2 listen port |
@@ -254,6 +263,6 @@ systemctl restart sing-box
 ## Notes
 
 - WARP+ is not required for this setup.
-- `warp-yg` is the default WARP config generation flow.
+- `warp-yg` is the default profile layout; account registration uses the `warp-api` helper by default.
 - If WARP outbounds show as unavailable, the most common cause is a failed WireGuard handshake.
 - The current route tags are preserved by the script, so existing client naming stays predictable.

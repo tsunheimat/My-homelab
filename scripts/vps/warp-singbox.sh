@@ -7,9 +7,18 @@ WARP_TOOL="${WARP_TOOL:-warp-yg}"
 WARP_GO_BIN="${WARP_GO_BIN:-/root/warp-go/warp-go}"
 WARP_GO_BASE="${WARP_GO_BASE:-/root/warp-go}"
 WARP_YG_BASE="${WARP_YG_BASE:-/root/warp-yg}"
-WARP_YG_REPO_URL="${WARP_YG_REPO_URL:-https://github.com/yonggekkk/warp-yg.git}"
-WARP_YG_REPO_DIR="${WARP_YG_REPO_DIR:-$WARP_YG_BASE/source}"
 WARP_YG_ACCOUNT_SOURCE="${WARP_YG_ACCOUNT_SOURCE:-auto}"
+WARP_YG_API_URL="${WARP_YG_API_URL:-https://api.zeroteam.top/warp?format=warp-go}"
+WARP_YG_HELPER_URL_BASE="${WARP_YG_HELPER_URL_BASE:-https://gitlab.com/rwkgyg/CFwarp/-/raw/main/point/cpu1}"
+WARP_YG_ACCOUNT_RETRIES="${WARP_YG_ACCOUNT_RETRIES:-${WARP_YG_FALLBACK_RETRIES:-5}}"
+WARP_YG_ACCOUNT_RETRY_DELAY="${WARP_YG_ACCOUNT_RETRY_DELAY:-${WARP_YG_FALLBACK_RETRY_DELAY:-8}}"
+WARP_YG_ACCOUNT_RETRY_MAX_DELAY="${WARP_YG_ACCOUNT_RETRY_MAX_DELAY:-60}"
+WARP_YG_ACCOUNT_MIN_INTERVAL="${WARP_YG_ACCOUNT_MIN_INTERVAL:-5}"
+WARP_YG_DIRECT_FALLBACK="${WARP_YG_DIRECT_FALLBACK:-false}"
+WARP_REGISTER_INTERFACE="${WARP_REGISTER_INTERFACE:-}"
+WARP_REGISTER_IP_VERSION="${WARP_REGISTER_IP_VERSION:-}"
+WARP_REGISTER_PROXY="${WARP_REGISTER_PROXY:-}"
+WARP_REGISTER_COMMAND_PREFIX="${WARP_REGISTER_COMMAND_PREFIX:-}"
 WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
@@ -22,10 +31,10 @@ SECONDARY_VNIC_TABLE="${SECONDARY_VNIC_TABLE:-100}"
 SECONDARY_VNIC_TABLE_BASE="${SECONDARY_VNIC_TABLE_BASE:-$SECONDARY_VNIC_TABLE}"
 SECONDARY_VNIC_PRIORITY="${SECONDARY_VNIC_PRIORITY:-100}"
 SECONDARY_VNIC_PRIORITY_BASE="${SECONDARY_VNIC_PRIORITY_BASE:-$SECONDARY_VNIC_PRIORITY}"
-WARP_YG_FAIL_MARKER=""
 EGRESS_INTERFACE="${EGRESS_INTERFACE:-}"
 EGRESS_1_INTERFACE="${EGRESS_1_INTERFACE:-}"
 EGRESS_2_INTERFACE="${EGRESS_2_INTERFACE:-}"
+WARP_YG_LAST_ACCOUNT_SECONDS=0
 
 declare -A USER_PASSWORDS
 declare -A EGRESS_IFACES
@@ -77,6 +86,58 @@ fetch_url() {
     else
       wget -qO- "$url"
     fi
+  fi
+}
+
+fetch_register_url() {
+  local url="$1"
+  local output="${2:-}"
+  local -a curl_args
+
+  if command -v curl >/dev/null 2>&1; then
+    curl_args=(-fsSL --retry 3 --connect-timeout 20)
+    case "$WARP_REGISTER_IP_VERSION" in
+      "" | auto) ;;
+      4 | ipv4) curl_args+=(--ipv4) ;;
+      6 | ipv6) curl_args+=(--ipv6) ;;
+      *) die "Unsupported WARP_REGISTER_IP_VERSION: $WARP_REGISTER_IP_VERSION" ;;
+    esac
+    [[ -n "$WARP_REGISTER_INTERFACE" ]] && curl_args+=(--interface "$WARP_REGISTER_INTERFACE")
+    [[ -n "$WARP_REGISTER_PROXY" ]] && curl_args+=(--proxy "$WARP_REGISTER_PROXY")
+    if [[ -n "$output" ]]; then
+      run_register_command curl "${curl_args[@]}" -o "$output" "$url"
+    else
+      run_register_command curl "${curl_args[@]}" "$url"
+    fi
+  else
+    [[ -z "$WARP_REGISTER_INTERFACE$WARP_REGISTER_IP_VERSION$WARP_REGISTER_PROXY$WARP_REGISTER_COMMAND_PREFIX" ]] || die "WARP register outbound controls require curl"
+    need_fetch_cmd
+    fetch_url "$url" "$output"
+  fi
+}
+
+run_register_command() {
+  local -a env_args prefix_args
+
+  env_args=()
+  prefix_args=()
+
+  if [[ -n "$WARP_REGISTER_PROXY" ]]; then
+    env_args=(
+      "HTTP_PROXY=$WARP_REGISTER_PROXY"
+      "HTTPS_PROXY=$WARP_REGISTER_PROXY"
+      "ALL_PROXY=$WARP_REGISTER_PROXY"
+    )
+  fi
+
+  if [[ -n "$WARP_REGISTER_COMMAND_PREFIX" ]]; then
+    read -r -a prefix_args <<< "$WARP_REGISTER_COMMAND_PREFIX"
+  fi
+
+  if ((${#env_args[@]} > 0 || ${#prefix_args[@]} > 0)); then
+    env "${env_args[@]}" "${prefix_args[@]}" "$@"
+  else
+    "$@"
   fi
 }
 
@@ -960,7 +1021,7 @@ warp_yg_arch() {
     aarch64 | arm64) printf 'arm64' ;;
     armv7l | armv7) printf 'arm' ;;
     i386 | i686) printf '386' ;;
-    *) die "Unsupported architecture for warp-yg fallback: $(uname -m)" ;;
+    *) die "Unsupported architecture for warp-yg helper: $(uname -m)" ;;
   esac
 }
 
@@ -1046,21 +1107,6 @@ install_github_binary() {
   echo "Installed $name to $dest"
 }
 
-ensure_warp_yg_repo() {
-  [[ "$AUTO_DOWNLOAD_WARP_TOOLS" == "true" ]] || return 0
-
-  need_cmd git
-  mkdir -p "$(dirname "$WARP_YG_REPO_DIR")"
-
-  if [[ -d "$WARP_YG_REPO_DIR/.git" ]]; then
-    git -C "$WARP_YG_REPO_DIR" pull --ff-only || echo "WARNING: could not update $WARP_YG_REPO_DIR; using existing checkout"
-  elif [[ -e "$WARP_YG_REPO_DIR" ]]; then
-    die "$WARP_YG_REPO_DIR exists but is not a git checkout"
-  else
-    git clone --depth 1 "$WARP_YG_REPO_URL" "$WARP_YG_REPO_DIR"
-  fi
-}
-
 ensure_warp_tools() {
   local arch linux_arch warp_go_regex wgcf_regex
 
@@ -1088,23 +1134,220 @@ ensure_warp_tools() {
   esac
 }
 
-write_warp_yg_fallback_conf() {
+warp_yg_account_value() {
+  local target="$1"
+
+  awk -v target="$target" '
+    function normalize(s) {
+      s = tolower(s)
+      gsub(/[^a-z0-9]/, "", s)
+      return s
+    }
+    {
+      line = $0
+      gsub(/\r/, "", line)
+      gsub(/\033\[[0-9;]*[A-Za-z]/, "", line)
+      colon = index(line, ":")
+      equals = index(line, "=")
+      if (colon == 0 && equals == 0) {
+        next
+      } else if (colon == 0) {
+        sep = equals
+      } else if (equals == 0) {
+        sep = colon
+      } else {
+        sep = colon < equals ? colon : equals
+      }
+      key = substr(line, 1, sep - 1)
+      value = substr(line, sep + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (normalize(key) == target) {
+        print value
+        exit
+      }
+    }
+  '
+}
+
+warp_yg_output_hint() {
+  awk '
+    function strip(s) {
+      gsub(/\r/, "", s)
+      gsub(/\033\[[0-9;]*[A-Za-z]/, "", s)
+      return s
+    }
+    NF {
+      line = strip($0)
+      lower = tolower(line)
+      if (lower ~ /^[[:space:]]*(private[ _-]?key|device[ _-]?id|token|reserved|client[ _-]?id)[[:space:]]*[:=]/) {
+        sub(/[[:space:]]*[:=].*/, " = <redacted>", line)
+      }
+      print line
+      count++
+      if (count >= 3) {
+        exit
+      }
+    }
+  '
+}
+
+warp_yg_wait_account_interval() {
+  local min_interval elapsed wait_for
+
+  min_interval="$WARP_YG_ACCOUNT_MIN_INTERVAL"
+  [[ "$min_interval" =~ ^[0-9]+$ ]] || min_interval=0
+  ((min_interval > 0)) || return 0
+
+  if ((WARP_YG_LAST_ACCOUNT_SECONDS > 0)); then
+    elapsed=$((SECONDS - WARP_YG_LAST_ACCOUNT_SECONDS))
+    if ((elapsed < min_interval)); then
+      wait_for=$((min_interval - elapsed))
+      echo "Waiting ${wait_for}s before next WARP account request..." >&2
+      sleep "$wait_for"
+    fi
+  fi
+
+  WARP_YG_LAST_ACCOUNT_SECONDS=$SECONDS
+}
+
+warp_yg_retry_delay() {
+  local base="$1"
+  local max="$2"
+  local attempt="$3"
+  local delay i
+
+  [[ "$base" =~ ^[0-9]+$ ]] || base=8
+  [[ "$max" =~ ^[0-9]+$ ]] || max=60
+  [[ "$attempt" =~ ^[1-9][0-9]*$ ]] || attempt=1
+
+  delay="$base"
+  for ((i = 1; i < attempt; i++)); do
+    delay=$((delay * 2))
+    if ((delay >= max)); then
+      delay="$max"
+      break
+    fi
+  done
+
+  printf '%s' "$delay"
+}
+
+warp_yg_account_reason() {
+  local output="$1"
+  local private_key="$2"
+  local device_id="$3"
+  local warp_token="$4"
+  local missing="" hint
+
+  [[ -n "$private_key" ]] || missing="${missing:+$missing, }private_key"
+  [[ -n "$device_id" ]] || missing="${missing:+$missing, }device_id"
+  [[ -n "$warp_token" ]] || missing="${missing:+$missing, }token"
+
+  if grep -qi 'connection refused' <<< "$output"; then
+    printf 'helper reported connection refused'
+    return 0
+  fi
+
+  if grep -qi "invalid character .* looking for beginning of value" <<< "$output"; then
+    printf 'registration endpoint returned a non-JSON error response, usually transient rate-limit or blocked egress; helper output: %s' "$(warp_yg_output_hint <<< "$output" | awk '{ if (NR > 1) printf " | "; printf "%s", $0 }')"
+    return 0
+  fi
+
+  if [[ -z "$output" ]]; then
+    printf 'helper returned no output; missing fields: %s' "$missing"
+    return 0
+  fi
+
+  hint="$(warp_yg_output_hint <<< "$output" | awk '{ if (NR > 1) printf " | "; printf "%s", $0 }')"
+  if [[ -n "$hint" ]]; then
+    printf 'missing fields: %s; helper output: %s' "$missing" "$hint"
+  else
+    printf 'missing fields: %s' "$missing"
+  fi
+}
+
+run_warpapi_helper_once() {
+  local cpu="$1"
+  local output_var="$2"
+  local helper helper_output status
+
+  helper="$(mktemp)"
+
+  if ! fetch_register_url "$WARP_YG_HELPER_URL_BASE/$cpu" "$helper"; then
+    rm -f "$helper"
+    printf -v "$output_var" '%s' ""
+    return 1
+  fi
+
+  chmod +x "$helper"
+  if helper_output="$(run_register_command "$helper" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$helper"
+
+  printf -v "$output_var" '%s' "$helper_output"
+  return "$status"
+}
+
+try_write_warpapi_conf() {
   local output_path="$1"
-  local cpu warpapi output private_key device_id warp_token
+  local cpu output private_key device_id warp_token public_key endpoint
+  local retries retry_delay retry_max_delay attempt status last_reason delay
 
   need_cmd mktemp
   cpu="$(warp_yg_arch)"
-  warpapi="$(mktemp)"
+  retries="$WARP_YG_ACCOUNT_RETRIES"
+  retry_delay="$WARP_YG_ACCOUNT_RETRY_DELAY"
+  retry_max_delay="$WARP_YG_ACCOUNT_RETRY_MAX_DELAY"
+  [[ "$retries" =~ ^[1-9][0-9]*$ ]] || retries=5
+  [[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=8
+  [[ "$retry_max_delay" =~ ^[0-9]+$ ]] || retry_max_delay=60
 
-  fetch_url "https://gitlab.com/rwkgyg/CFwarp/-/raw/main/point/cpu1/$cpu" "$warpapi"
-  chmod +x "$warpapi"
-  output="$("$warpapi")"
-  rm -f "$warpapi"
+  for ((attempt = 1; attempt <= retries; attempt++)); do
+    output=""
+    private_key=""
+    device_id=""
+    warp_token=""
 
-  private_key="$(awk -F ': ' '/private_key/{print $2}' <<< "$output")"
-  device_id="$(awk -F ': ' '/device_id/{print $2}' <<< "$output")"
-  warp_token="$(awk -F ': ' '/token/{print $2}' <<< "$output")"
-  [[ -n "$private_key" && -n "$device_id" && -n "$warp_token" ]] || die "warp-yg fallback did not return a complete WARP account"
+    warp_yg_wait_account_interval
+    if run_warpapi_helper_once "$cpu" output; then
+      status=0
+    else
+      status=$?
+    fi
+
+    private_key="$(warp_yg_account_value privatekey <<< "$output")"
+    device_id="$(warp_yg_account_value deviceid <<< "$output")"
+    warp_token="$(warp_yg_account_value token <<< "$output")"
+
+    if [[ -n "$private_key" && -n "$device_id" && -n "$warp_token" ]]; then
+      break
+    fi
+
+    last_reason="$(warp_yg_account_reason "$output" "$private_key" "$device_id" "$warp_token")"
+    if ((status != 0)); then
+      last_reason="helper exited with status $status; $last_reason"
+    fi
+
+    if ((attempt < retries)); then
+      delay="$(warp_yg_retry_delay "$retry_delay" "$retry_max_delay" "$attempt")"
+      echo "WARNING: warp-api helper attempt $attempt/$retries failed: $last_reason; retrying in ${delay}s..." >&2
+      ((delay == 0)) || sleep "$delay"
+    fi
+  done
+
+  if [[ -z "$private_key" || -z "$device_id" || -z "$warp_token" ]]; then
+    echo "WARNING: warp-api helper did not return a complete WARP account after $retries attempt(s): $last_reason" >&2
+    return 1
+  fi
+
+  public_key="$(warp_yg_account_value publickey <<< "$output")"
+  endpoint="$(warp_yg_account_value endpoint <<< "$output")"
+  [[ -n "$public_key" ]] || public_key="bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+  [[ -n "$endpoint" ]] || endpoint="162.159.193.10:2408"
 
   cat > "$output_path" <<EOF
 [Account]
@@ -1116,12 +1359,59 @@ Name = WARP
 MTU  = 1280
 
 [Peer]
-PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
-Endpoint = 162.159.193.10:2408
+PublicKey = $public_key
+Endpoint = $endpoint
 # AllowedIPs = 0.0.0.0/0
 # AllowedIPs = ::/0
 KeepAlive = 30
 EOF
+}
+
+write_warpapi_conf() {
+  local output_path="$1"
+
+  try_write_warpapi_conf "$output_path" || die "warp-api helper registration failed"
+}
+
+try_write_zeroteam_conf() {
+  local output_path="$1"
+  local tmp
+
+  tmp="$(mktemp)"
+  warp_yg_wait_account_interval
+  if fetch_register_url "$WARP_YG_API_URL" "$tmp" && valid_warp_yg_conf "$tmp"; then
+    cp "$tmp" "$output_path"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+write_upstream_warp_conf() {
+  local output_path="$1"
+
+  if try_write_zeroteam_conf "$output_path"; then
+    return 0
+  fi
+
+  echo "WARNING: upstream warp-go API did not return a valid warp-go config; using warp-api helper." >&2
+  write_warpapi_conf "$output_path"
+}
+
+write_warp_go_registered_conf() {
+  local output_path="$1"
+
+  [[ -x "$WARP_GO_BIN" ]] || die "warp-go binary not found or not executable at $WARP_GO_BIN"
+
+  rm -f "$output_path"
+  warp_yg_wait_account_interval
+  if ! run_register_command "$WARP_GO_BIN" --register --config="$output_path"; then
+    rm -f "$output_path"
+    die "warp-go direct registration failed"
+  fi
+
+  valid_warp_yg_conf "$output_path" || die "warp-go direct registration did not produce a complete WARP config: $output_path"
 }
 
 valid_warp_yg_conf() {
@@ -1136,31 +1426,32 @@ valid_warp_yg_conf() {
 write_warp_yg_conf() {
   local output_path="$1"
 
-  need_fetch_cmd
-
   case "$WARP_YG_ACCOUNT_SOURCE" in
-    auto | zeroteam | warpapi) ;;
+    warpapi | warp-api | warp_api | api | 3 | method3 | method-3)
+      write_warpapi_conf "$output_path"
+      ;;
+    upstream | zeroteam | warp-yg | 1 | method1 | method-1)
+      write_upstream_warp_conf "$output_path"
+      ;;
+    auto)
+      if try_write_zeroteam_conf "$output_path"; then
+        return 0
+      fi
+      echo "WARNING: upstream warp-go API did not return a valid warp-go config; using warp-api helper." >&2
+      if try_write_warpapi_conf "$output_path"; then
+        return 0
+      fi
+      if [[ "$WARP_YG_DIRECT_FALLBACK" == "true" ]]; then
+        echo "WARNING: warp-api helper failed; using direct warp-go registration." >&2
+        write_warp_go_registered_conf "$output_path"
+      fi
+      die "WARP account generation failed from upstream API and warp-api helper"
+      ;;
+    warp-go | direct)
+      write_warp_go_registered_conf "$output_path"
+      ;;
     *) die "Unsupported WARP_YG_ACCOUNT_SOURCE: $WARP_YG_ACCOUNT_SOURCE" ;;
   esac
-
-  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "warpapi" || -f "$WARP_YG_FAIL_MARKER" ]]; then
-    write_warp_yg_fallback_conf "$output_path"
-    return 0
-  fi
-
-  if fetch_url "https://api.zeroteam.top/warp?format=warp-go" "$output_path" && valid_warp_yg_conf "$output_path"; then
-    return 0
-  fi
-
-  rm -f "$output_path"
-  touch "$WARP_YG_FAIL_MARKER"
-
-  if [[ "$WARP_YG_ACCOUNT_SOURCE" == "zeroteam" ]]; then
-    die "warp-yg zeroteam account API failed"
-  fi
-
-  echo "WARNING: zeroteam WARP API failed; using warp-yg fallback generator for the rest of this run" >&2
-  write_warp_yg_fallback_conf "$output_path"
 }
 
 profile_value() {
@@ -1798,9 +2089,7 @@ require_base_commands() {
 }
 
 init_runtime() {
-  WARP_YG_FAIL_MARKER="$(mktemp /tmp/warp-yg-zeroteam.XXXXXX)"
-  rm -f "$WARP_YG_FAIL_MARKER"
-  trap 'rm -f "$WARP_YG_FAIL_MARKER"' EXIT
+  :
 }
 
 load_passwords_from_config() {
@@ -2009,10 +2298,6 @@ prepare_warp_generation() {
   ensure_warp_tools
   detect_warp_tool
   CURRENT_WARP_FLAVOR="$WARP_TOOL"
-
-  if [[ "$CURRENT_WARP_FLAVOR" == "warp-yg" ]]; then
-    ensure_warp_yg_repo
-  fi
 }
 
 regenerate_warp_tags() {
