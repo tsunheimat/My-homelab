@@ -62,6 +62,7 @@ const FGF = inArg.fgf == undefined ? " " : decodeURI(inArg.fgf),
   FNAME = inArg.name == undefined ? "" : decodeURI(inArg.name),
   BLKEY = inArg.blkey == undefined ? "" : decodeURI(inArg.blkey),
   ENTRY = inArg.entry == undefined ? "" : decodeURI(inArg.entry),
+  ENTRY_LIST = ENTRY ? ENTRY.split("+").map((value) => value.trim().replace(/-v6$/i, "")).filter(Boolean).sort((a, b) => b.length - a.length) : [],
   ENTRYPOS = inArg.entrypos == undefined ? "after-country" : decodeURI(inArg.entrypos),
   blockquic = inArg.blockquic == undefined ? "" : decodeURI(inArg.blockquic),
   nameMap = {
@@ -356,20 +357,20 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function getEntryParts(proxy, originalName) {
-  if (!ENTRY) return { entryName: "", exitName: "" };
+  if (!ENTRY_LIST.length) return { entryName: "", exitName: "" };
 
   const text = [originalName, proxy.server, proxy.sni].filter(Boolean).join(" ");
-  const entryHost = escapeRegExp(ENTRY);
+  const entryHost = ENTRY_LIST.map(escapeRegExp).join("|");
   const exitMatch = originalName.match(/\b(?:direct|warp)-v[46]\b/i);
   const exitName = exitMatch ? exitMatch[0].toLowerCase() : "";
 
-  const completeEntryPattern = new RegExp(`(?:^|[^A-Za-z0-9])(${entryHost}-\\d+(?:-v6)?)(?=$|[^A-Za-z0-9])`, "i");
+  const completeEntryPattern = new RegExp(`(?:^|[^A-Za-z0-9])((?:${entryHost})-\\d+(?:-v6)?)(?=$|[^A-Za-z0-9])`, "i");
   const completeEntryMatch = text.match(completeEntryPattern);
   if (completeEntryMatch) {
     return { entryName: completeEntryMatch[1], exitName };
   }
 
-  const hostPattern = new RegExp(`(?:^|[^A-Za-z0-9])${entryHost}(-v6)?(?=$|[^A-Za-z0-9])`, "i");
+  const hostPattern = new RegExp(`(?:^|[^A-Za-z0-9])((?:${entryHost})(-v6)?)(?=$|[^A-Za-z0-9])`, "i");
   const hostMatch = text.match(hostPattern);
   if (!hostMatch) return { entryName: "", exitName: "" };
 
@@ -379,10 +380,11 @@ function getEntryParts(proxy, originalName) {
   if (!indexMatch) return { entryName: "", exitName: "" };
 
   const entryIndex = String(parseInt(indexMatch[1], 10));
-  const isV6Entry = Boolean(hostMatch[1]) || new RegExp(`${entryHost}-v6`, "i").test(text);
+  const matchedEntryHost = hostMatch[1].replace(/-v6$/i, "");
+  const isV6Entry = /-v6$/i.test(hostMatch[1]) || new RegExp(`(?:${entryHost})-v6`, "i").test(text);
 
   return {
-    entryName: `${ENTRY}-${entryIndex}${isV6Entry ? "-v6" : ""}`,
+    entryName: `${matchedEntryHost}-${entryIndex}${isV6Entry ? "-v6" : ""}`,
     exitName,
   };
 }

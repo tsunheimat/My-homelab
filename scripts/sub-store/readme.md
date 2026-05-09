@@ -51,7 +51,7 @@ https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/
 | **`sn`** | **序號分隔符號**<br><br> <br><br>設定國家名稱與序號（01, 02）之間的分隔符號。預設為空格。 | `#sn=_` |
 | **`name`** | **新增自訂前綴**<br><br> <br><br>新增自訂名稱（如機場名稱）。預設會放在國旗後、國家名稱前；若未啟用 `flag`，則等同放在最前方。 | `#name=我的機場` |
 | **`nf`** | **前綴優先**<br><br> <br><br>配合 `name` 使用，將自訂前綴放在國旗前面。 | `#nf` |
-| **`entry`** | **保留同機入口名**<br><br> <br><br>用於同一台主機有多個入口 / 出口組合的節點。指定主機短名後，腳本會從原名、`server`、`sni` 匹配入口。若原名已經有完整入口名，例如 `arm1-1` 或 `arm1-1-v6`，會直接保留；若只有 `direct-v4 01` 這類舊格式，才會轉成 `arm1-1 direct-v4`。 | `#entry=arm1&one` |
+| **`entry`** | **保留同機入口名**<br><br> <br><br>用於同一台主機有多個入口 / 出口組合的節點。指定主機短名後，腳本會從原名、`server`、`sni` 匹配入口。若原名已經有完整入口名，例如 `arm1-1` 或 `arm1-1-v6`，會直接保留；若只有 `direct-v4 01` 這類舊格式，才會轉成 `arm1-1 direct-v4`。`+` 可用來一次匹配多個入口名。 | `#entry=arm1+arm2+amd1+amd2&one` |
 | **`entrypos`** | **入口名位置**<br><br> <br><br>預設入口名放在國家後面，例如 `新加坡 arm1-1 direct-v4`。如需把入口名放最前，可設定 `front`。 | `#entry=arm1&entrypos=front` |
 | **`one`** | **單節點去零**<br><br> <br><br>如果某地區只有一個節點，則不顯示序號（去掉 "01"）。 | `#one` |
 
@@ -122,6 +122,15 @@ _輸入：_ `oracle 新加坡 arm1-1-v6 warp-v6 02` _輸出：_ `新加坡 arm1-
 
 ```
 #entry=arm1&one
+```
+
+#### 場景 6：多個入口名一起匹配
+
+_輸入：_ `oracle 新加坡 arm1 direct-v4 01`、`oracle 新加坡 arm2 direct-v4 01`、`oracle 新加坡 amd1 direct-v6 01`、`oracle 新加坡 amd2 direct-v6 01`<br>
+_輸出：_ `新加坡 arm1-1 direct-v4`、`新加坡 arm2-1 direct-v4`、`新加坡 amd1-1 direct-v6`、`新加坡 amd2-1 direct-v6`
+
+```
+#entry=arm1+arm2+amd1+amd2&one
 ```
 
 * * *
