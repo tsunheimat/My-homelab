@@ -375,11 +375,15 @@ direct_interface_count() {
   printf '1'
 }
 
+is_positive_integer() {
+  [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
 validate_positive_integer() {
   local value="$1"
   local label="$2"
 
-  [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$label must be a positive integer"
+  is_positive_integer "$value" || die "$label must be a positive integer"
 }
 
 legacy_user_name() {
@@ -400,11 +404,75 @@ user_password() {
   printf '%s' "${USER_PASSWORDS[$user_name]}"
 }
 
+infer_warp_profiles_per_interface() {
+  local slot_count="${1:-${WARP_INTERFACE_COUNT:-}}"
+  local interface_count unique_count
+  local -a unique_ifaces
+
+  is_positive_integer "$slot_count" || return 0
+
+  if is_positive_integer "${EGRESS_INTERFACE_COUNT:-}" && ((slot_count % EGRESS_INTERFACE_COUNT == 0)); then
+    interface_count="$EGRESS_INTERFACE_COUNT"
+  else
+    mapfile -t unique_ifaces < <(config_unique_bind_interfaces)
+    unique_count="${#unique_ifaces[@]}"
+    if ((unique_count > 0 && slot_count % unique_count == 0)); then
+      interface_count="$unique_count"
+    fi
+  fi
+
+  if is_positive_integer "${interface_count:-}"; then
+    printf '%s' "$((slot_count / interface_count))"
+  fi
+}
+
+current_warp_profiles_per_interface() {
+  local inferred
+
+  if is_positive_integer "${WARP_PROFILES_PER_INTERFACE:-}"; then
+    printf '%s' "$WARP_PROFILES_PER_INTERFACE"
+    return 0
+  fi
+
+  inferred="$(infer_warp_profiles_per_interface)"
+  if is_positive_integer "$inferred"; then
+    printf '%s' "$inferred"
+  fi
+}
+
+warp_outbound_family_for_slot() {
+  local warp_family="$1"
+  local index="$2"
+  local profiles_per_interface ordinal
+
+  profiles_per_interface="$(current_warp_profiles_per_interface)"
+  if is_positive_integer "$profiles_per_interface" && ((profiles_per_interface >= 2)); then
+    ordinal=$((((index - 1) % profiles_per_interface) + 1))
+    if ((ordinal % 2 == 1)); then
+      printf '4'
+    else
+      printf '6'
+    fi
+    return 0
+  fi
+
+  printf '%s' "$warp_family"
+}
+
 warp_profile_tag() {
   local family="$1"
   local index="$2"
 
   printf 'warp-ipv%s-%s' "$family" "$index"
+}
+
+warp_profile_label() {
+  local warp_family="$1"
+  local index="$2"
+  local outbound_family
+
+  outbound_family="$(warp_outbound_family_for_slot "$warp_family" "$index")"
+  printf 'warp-v%s-%s (v%s out -> v%s WARP)' "$warp_family" "$index" "$outbound_family" "$warp_family"
 }
 
 interface_address() {
@@ -1070,7 +1138,12 @@ configure_generated_egress_interfaces() {
     done
   done
 
-  echo "Generating $profiles_per_interface IPv4 WARP and $profiles_per_interface IPv6 WARP per egress interface."
+  echo "Generating $profiles_per_interface WARP source slot(s) per egress interface."
+  if ((profiles_per_interface >= 2)); then
+    echo "Per interface, choices 1-4 are: v4 out -> v4 WARP, v4 out -> v6 WARP, v6 out -> v4 WARP, v6 out -> v6 WARP."
+  else
+    echo "One source slot keeps matched v4/v6 WARP behavior; use 2 source slots for all four v4/v6 outbound combinations."
+  fi
   echo "Total internal WARP slots: $WARP_INTERFACE_COUNT"
 }
 
@@ -2377,8 +2450,8 @@ load_warp_profile_state() {
 all_warp_tags() {
   local family index
 
-  for family in 4 6; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    for family in 4 6; do
       warp_profile_tag "$family" "$index"
       echo
     done
@@ -2389,8 +2462,8 @@ missing_warp_tags() {
   local family index key tag profile singbox
 
   set_warp_profile_paths "$CURRENT_WARP_FLAVOR"
-  for family in 4 6; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    for family in 4 6; do
       key="${family}:${index}"
       tag="$(warp_profile_tag "$family" "$index")"
       profile="${WARP_PROFILE_PATHS[$key]}"
@@ -2460,20 +2533,25 @@ regenerate_warp_tags() {
 render_warp_endpoint() {
   local family="$1"
   local index="$2"
-  local map_key tag allowed_ips resolver bind_address bind_key endpoint port
+  local map_key tag allowed_ips resolver bind_address bind_key endpoint port outbound_family
 
   map_key="${family}:${index}"
   tag="warp-v${family}-${index}"
   endpoint="${WARP_ENDPOINTS[$map_key]:-engage.cloudflareclient.com}"
   port="${WARP_PORTS[$map_key]:-2408}"
+  outbound_family="$(warp_outbound_family_for_slot "$family" "$index")"
 
   if [[ "$family" == "4" ]]; then
     allowed_ips="0.0.0.0/0"
+  else
+    allowed_ips="::/0"
+  fi
+
+  if [[ "$outbound_family" == "4" ]]; then
     resolver="ipv4_only"
     bind_key="inet4_bind_address"
     bind_address="${EGRESS_V4_ADDRS[$index]}"
   else
-    allowed_ips="::/0"
     resolver="ipv6_only"
     bind_key="inet6_bind_address"
     bind_address="${EGRESS_V6_ADDRS[$index]}"
@@ -2513,8 +2591,8 @@ render_warp_endpoints() {
   local family index first
 
   first=true
-  for family in 4 6; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    for family in 4 6; do
       if [[ "$first" == "true" ]]; then
         first=false
       else
@@ -2547,7 +2625,10 @@ render_hysteria_users() {
         }
 EOF
     done
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+  done
+
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    for family in 4 6; do
       user_name="warp-v${family}-${index}"
       password="$(json_escape "$(user_password "$user_name")")"
       if [[ "$first" == "true" ]]; then
@@ -2798,7 +2879,7 @@ EOF
 }
 
 print_proxy_information() {
-  local country node_name server sni_name server_index family kind index user_name password display_index
+  local country node_name server sni_name server_index family kind index user_name password display_index outbound_family
   local direct_count
 
   ensure_sni_domains
@@ -2819,13 +2900,16 @@ print_proxy_information() {
         printf -v display_index '%02d' "$index"
         echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
       done
+    done
 
-      kind="warp"
-      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    kind="warp"
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      for family in 4 6; do
         user_name="${kind}-v${family}-${index}"
         password="$(user_password "$user_name")"
         printf -v display_index '%02d' "$index"
-        echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
+        outbound_family="$(warp_outbound_family_for_slot "$family" "$index")"
+        echo "{ name: \"oracle $country $sni_name ${kind}-v${outbound_family}-out-v${family}-warp $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
       done
     done
   done
@@ -2857,10 +2941,10 @@ prepare_new_config_inputs() {
     default_profiles_per_interface="$((existing_interface_count / ${#existing_ifaces[@]}))"
     [[ "$default_profiles_per_interface" -gt 0 ]] || default_profiles_per_interface="1"
   fi
-  [[ -n "$default_profiles_per_interface" ]] || default_profiles_per_interface="1"
+  [[ -n "$default_profiles_per_interface" ]] || default_profiles_per_interface="2"
 
-  prompt WARP_PROFILES_PER_INTERFACE "WARP profiles per egress interface" "$default_profiles_per_interface"
-  validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP profiles per egress interface"
+  prompt WARP_PROFILES_PER_INTERFACE "WARP source slots per egress interface (2 gives v4-out and v6-out)" "$default_profiles_per_interface"
+  validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP source slots per egress interface"
   prompt EGRESS_INTERFACE_COUNT "How many egress interfaces" "$default_egress_interface_count"
   validate_positive_integer "$EGRESS_INTERFACE_COUNT" "Egress interface count"
   domain_max="$((EGRESS_INTERFACE_COUNT * 2))"
@@ -2887,22 +2971,23 @@ change_sni() {
 
 regenerate_selected_warp_menu() {
   local choice option selected_tag ipv4_choice ipv6_choice all_choice family index
-  local -a ipv4_tags ipv6_tags all_tags
+  local -a option_tags ipv4_tags ipv6_tags all_tags
 
   echo
   echo "Select WARP profile to regenerate:"
   option=1
-  for family in 4 6; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-      echo "$option. warp-v${family}-${index}"
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    for family in 4 6; do
+      option_tags[$option]="$(warp_profile_tag "$family" "$index")"
+      echo "$option. $(warp_profile_label "$family" "$index")"
       ((option++))
     done
   done
   ipv4_choice=$option
-  echo "$ipv4_choice. all IPv4 WARP"
+  echo "$ipv4_choice. all v4 WARP tunnel profiles"
   ((option++))
   ipv6_choice=$option
-  echo "$ipv6_choice. all IPv6 WARP"
+  echo "$ipv6_choice. all v6 WARP tunnel profiles"
   ((option++))
   all_choice=$option
   echo "$all_choice. all WARP"
@@ -2924,12 +3009,8 @@ regenerate_selected_warp_menu() {
   elif [[ "$choice" == "$all_choice" ]]; then
     mapfile -t all_tags < <(all_warp_tags)
     regenerate_warp_tags "${all_tags[@]}"
-  elif [[ "$choice" =~ ^[1-9][0-9]*$ && "$choice" -lt "$ipv4_choice" ]]; then
-    if ((choice <= WARP_INTERFACE_COUNT)); then
-      selected_tag="$(warp_profile_tag 4 "$choice")"
-    else
-      selected_tag="$(warp_profile_tag 6 "$((choice - WARP_INTERFACE_COUNT))")"
-    fi
+  elif [[ "$choice" =~ ^[1-9][0-9]*$ && -n "${option_tags[$choice]-}" ]]; then
+    selected_tag="${option_tags[$choice]}"
     regenerate_warp_tags "$selected_tag"
   else
     echo "Invalid choice"
@@ -2947,7 +3028,7 @@ main_menu() {
     echo
     echo "==== Sing-box HY2 + WARP Menu ===="
     echo "Current SNI domains ($(sni_domain_count)): $(sni_domain_summary)"
-    echo "Current WARP slot total: $WARP_INTERFACE_COUNT"
+    echo "Current WARP source slot total: $WARP_INTERFACE_COUNT"
     echo "Current WARP mode: $CURRENT_WARP_FLAVOR"
     echo "1. 重新生成密碼"
     echo "2. 重新生成所有 WARP"
@@ -3009,6 +3090,10 @@ load_initial_state() {
 
   [[ -n "$WARP_INTERFACE_COUNT" ]] || WARP_INTERFACE_COUNT="${existing_interface_count:-2}"
   validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP slot count"
+  if [[ -z "$WARP_PROFILES_PER_INTERFACE" ]]; then
+    WARP_PROFILES_PER_INTERFACE="$(infer_warp_profiles_per_interface "$WARP_INTERFACE_COUNT")"
+  fi
+  [[ -z "$WARP_PROFILES_PER_INTERFACE" ]] || validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP source slots per egress interface"
 
   if [[ -z "${SNI_DOMAINS[1]-}" || -z "${SNI_DOMAINS[2]-}" ]]; then
     prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"

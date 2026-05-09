@@ -8,11 +8,18 @@ This directory contains `warp-singbox.sh`, an interactive helper script for buil
 - 2 or more SNI/ACME domains, up to 2 domains per selected egress interface
 - routing by Hysteria2 user:
   - `direct-v4-N` -> direct IPv4 for egress interface `N`
-  - `warp-v4-N` -> WARP IPv4 profile `N`
+  - `warp-v4-N` -> WARP tunnel carrying IPv4 traffic for source slot `N`
   - `direct-v6-N` -> direct IPv6 for egress interface `N`
-  - `warp-v6-N` -> WARP IPv6 profile `N`
+  - `warp-v6-N` -> WARP tunnel carrying IPv6 traffic for source slot `N`
 
-Menu option `6` asks how many WARP profiles to create per egress interface. For example, `3` means every selected real interface gets `3` IPv4 WARP profiles and `3` IPv6 WARP profiles. The script then expands that into internal slot numbers such as `warp-v4-1`, `warp-v4-2`, and so on. Direct entries stay one per selected real interface.
+Menu option `6` asks how many WARP source slots to create per egress interface. Each source slot gets both an IPv4 WARP tunnel profile and an IPv6 WARP tunnel profile. With `2` source slots per egress interface, the first four WARP choices are:
+
+1. v4 out -> v4 WARP
+2. v4 out -> v6 WARP
+3. v6 out -> v4 WARP
+4. v6 out -> v6 WARP
+
+Odd source slots bind the WireGuard connection through the egress interface's IPv4 address; even source slots bind through its IPv6 address. Direct entries stay one per selected real interface.
 
 When the generator asks for an egress interface, it prints a numbered interface list. Numeric input means that displayed list number, not the Linux link index from `ip link`.
 
@@ -33,7 +40,7 @@ When run, the script shows a menu for:
 7. Writing `/etc/netplan/60-secondary-vnic.yaml` for VNIC policy routing
 
 If existing Hysteria2 users are present in `config.json`, their passwords are preserved unless you choose password regeneration.
-Menu option `6` prompts for the config values, the WARP profiles-per-interface count, and the egress interfaces. It creates fresh passwords, regenerates all WARP profiles, writes `config.json`, checks it, and restarts Sing-box.
+Menu option `6` prompts for the config values, the WARP source-slots-per-interface count, and the egress interfaces. It creates fresh passwords, regenerates all WARP profiles, writes `config.json`, checks it, and restarts Sing-box.
 Menu option `7` writes a policy-routing netplan file for real VNICs. It writes IPv4 and IPv6 source routing for secondary VNICs, plus IPv6 source routing for the primary VNIC so both public IPv6 addresses can receive proxy connections and reply through the same interface. It first uses unique secondary interfaces referenced by WARP slots, and if WARP slots are repeated on one real interface, it falls back to detecting other active real NICs such as `enp1s0`. Repeated interfaces are written once. It calculates each IPv4 gateway as the first usable IPv4 in that interface subnet, detects each IPv6 RA gateway from the default route, or uses overrides when set.
 
 ## Requirements
@@ -95,7 +102,7 @@ oracle <country> <name> <type> <num>
 ```
 
 The `<name>` value is the node name plus the SNI slot number, such as `sg-arm1-1`, `sg-arm1-2`, or `sg-arm1-1-v6`. Numbered SNI hostnames like `sg-arm1-2-v6.example.com` are used directly for the number; manual non-numbered domains fall back to paired slot indexes.
-Each proxy information run prints direct entries once per egress interface and WARP entries once per internal WARP slot. The total is `2 * SNI_DOMAIN_COUNT * (EGRESS_INTERFACE_COUNT + WARP_INTERFACE_COUNT)`. For example, `2` egress interfaces with `3` profiles each has `2` direct indexes and `6` WARP indexes.
+Each proxy information run prints direct entries once per egress interface and WARP entries twice per internal source slot, once for v4 WARP and once for v6 WARP. The total is `2 * SNI_DOMAIN_COUNT * (EGRESS_INTERFACE_COUNT + WARP_INTERFACE_COUNT)`. For example, `2` egress interfaces with `2` source slots each has `2` direct indexes and `4` WARP source indexes.
 
 ## Default warp-yg
 
@@ -172,9 +179,9 @@ WARP_GO_BIN=/custom/path/warp-go WARP_YG_BASE=/custom/warp-yg /etc/sing-box/warp
 | `WGCF_BIN` | `/root/wgcf/wgcf` | `wgcf` binary path |
 | `WGCF_BASE` | `/root/wgcf` | Directory for generated `wgcf` profiles |
 | `LISTEN_PORT` | `443` | Hysteria2 listen port |
-| `WARP_PROFILES_PER_INTERFACE` | `1` or derived from existing config | Number of IPv4 and IPv6 WARP profiles to generate per selected egress interface in menu option `6` |
+| `WARP_PROFILES_PER_INTERFACE` | `2` or derived from existing config | Number of WARP source slots to generate per selected egress interface in menu option `6`; each source slot has both v4-WARP and v6-WARP tunnel profiles |
 | `EGRESS_INTERFACE_COUNT` | existing unique interfaces or `2` | Number of real egress interfaces selected in menu option `6` |
-| `WARP_INTERFACE_COUNT` | auto-detected or expanded by option `6` | Internal total WARP slot count; direct entries are derived from unique egress interfaces |
+| `WARP_INTERFACE_COUNT` | auto-detected or expanded by option `6` | Internal total WARP source slot count; direct entries are derived from unique egress interfaces |
 | `SECONDARY_NETPLAN_PATH` | `/etc/netplan/60-secondary-vnic.yaml` | Netplan path for secondary VNIC policy routing |
 | `SECONDARY_VNIC_COUNT` | `WARP_INTERFACE_COUNT` or `2` | Highest secondary VNIC index considered by option `7`; repeated real interfaces are deduplicated |
 | `SECONDARY_VNIC_TABLE_BASE` | `100` | Routing table base; primary IPv6 uses `99`, interface 2 uses `100`, interface 3 uses `101`, etc. |
