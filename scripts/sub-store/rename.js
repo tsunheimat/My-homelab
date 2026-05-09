@@ -20,8 +20,8 @@
  * [flag]   在输出名称中加入对应 emoji 国旗；默认顺序下国旗在 name 前。
  * [name=]  添加自定义名称；默认放在国旗后、国家名前，未启用 flag 时等同放在最前。
  * [nf]     把 name= 的值放在最前面，即放到国旗前。
- * [entry=] 保留同机入口名，例如 entry=arm1 会把 arm1 direct-v4 01 输出为 新加坡 arm1-1 direct-v4；
- *          如果匹配到 arm1-v6，会输出 arm1-1-v6。
+ * [entry=] 保留同机入口名，例如 entry=arm1 会优先保留 arm1-1 / arm1-1-v6 这类完整入口名；
+ *          如果只有 arm1 direct-v4 01 这类旧格式，则输出为 新加坡 arm1-1 direct-v4。
  * [entrypos=front] 可选，把 entry= 生成的入口名放在国家名前；默认放在国家名后。
  *
  *** 保留 / 过滤参数
@@ -360,6 +360,15 @@ function getEntryParts(proxy, originalName) {
 
   const text = [originalName, proxy.server, proxy.sni].filter(Boolean).join(" ");
   const entryHost = escapeRegExp(ENTRY);
+  const exitMatch = originalName.match(/\b(?:direct|warp)-v[46]\b/i);
+  const exitName = exitMatch ? exitMatch[0].toLowerCase() : "";
+
+  const completeEntryPattern = new RegExp(`(?:^|[^A-Za-z0-9])(${entryHost}-\\d+(?:-v6)?)(?=$|[^A-Za-z0-9])`, "i");
+  const completeEntryMatch = text.match(completeEntryPattern);
+  if (completeEntryMatch) {
+    return { entryName: completeEntryMatch[1], exitName };
+  }
+
   const hostPattern = new RegExp(`(?:^|[^A-Za-z0-9])${entryHost}(-v6)?(?=$|[^A-Za-z0-9])`, "i");
   const hostMatch = text.match(hostPattern);
   if (!hostMatch) return { entryName: "", exitName: "" };
@@ -369,8 +378,6 @@ function getEntryParts(proxy, originalName) {
     originalName.match(/\b0?(\d+)\b$/);
   if (!indexMatch) return { entryName: "", exitName: "" };
 
-  const exitMatch = originalName.match(/\b(?:direct|warp)-v[46]\b/i);
-  const exitName = exitMatch ? exitMatch[0].toLowerCase() : "";
   const entryIndex = String(parseInt(indexMatch[1], 10));
   const isV6Entry = Boolean(hostMatch[1]) || new RegExp(`${entryHost}-v6`, "i").test(text);
 
