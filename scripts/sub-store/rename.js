@@ -1,5 +1,5 @@
 /**
- * 更新日期：2026-05-07
+ * 更新日期：2026-05-09
  * 用法：Sub-Store 脚本操作添加。
  * 参数必须以 # 开头，多个参数使用 & 连接，例如 url#flag&out=us。
  * 禁用缓存可使用 url#noCache。
@@ -20,6 +20,9 @@
  * [flag]   在输出名称中加入对应 emoji 国旗；默认顺序下国旗在 name 前。
  * [name=]  添加自定义名称；默认放在国旗后、国家名前，未启用 flag 时等同放在最前。
  * [nf]     把 name= 的值放在最前面，即放到国旗前。
+ * [entry=] 保留同机入口名，例如 entry=arm1 会把 arm1 direct-v4 01 输出为 新加坡 arm1-1 direct-v4；
+ *          如果匹配到 arm1-v6，会输出 arm1-1-v6。
+ * [entrypos=front] 可选，把 entry= 生成的入口名放在国家名前；默认放在国家名后。
  *
  *** 保留 / 过滤参数
  * [blkey=iplc+GPT>新名字+NF] 保留自定义字段，多个关键词用 + 分隔，大小写敏感；可用 旧名>新名 替换保留字段。
@@ -58,6 +61,8 @@ const FGF = inArg.fgf == undefined ? " " : decodeURI(inArg.fgf),
   XHFGF = inArg.sn == undefined ? " " : decodeURI(inArg.sn),
   FNAME = inArg.name == undefined ? "" : decodeURI(inArg.name),
   BLKEY = inArg.blkey == undefined ? "" : decodeURI(inArg.blkey),
+  ENTRY = inArg.entry == undefined ? "" : decodeURI(inArg.entry),
+  ENTRYPOS = inArg.entrypos == undefined ? "after-country" : decodeURI(inArg.entrypos),
   blockquic = inArg.blockquic == undefined ? "" : decodeURI(inArg.blockquic),
   nameMap = {
     cn: "cn",
@@ -320,8 +325,13 @@ function operator(pro) {
           if (caCity) caRegion = caCity[0];
         }
       }
+      const entryParts = getEntryParts(e, ens);
+      const entryFields = [entryParts.entryName, entryParts.exitName].filter((k) => k !== "");
+      const regionFields = ENTRYPOS === "front"
+        ? entryFields.concat(findKeyValue)
+        : [findKeyValue].concat(entryFields);
       keyover = keyover
-        .concat(firstName, usflag, nNames, ikey, findKeyValue, ispName, cnRegion, cnTransit, caRegion, retainKey, ikeys)
+        .concat(firstName, usflag, nNames, ikey, regionFields, ispName, cnRegion, cnTransit, caRegion, retainKey, ikeys)
         .filter((k) => k !== "");
       e.name = keyover.join(FGF);
     } else {
@@ -342,6 +352,33 @@ function operator(pro) {
 
 // prettier-ignore
 function getList(arg) { switch (arg) { case 'us': return EN; case 'gq': return FG; case 'quan': return QC; default: return ZH; } }
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function getEntryParts(proxy, originalName) {
+  if (!ENTRY) return { entryName: "", exitName: "" };
+
+  const text = [originalName, proxy.server, proxy.sni].filter(Boolean).join(" ");
+  const entryHost = escapeRegExp(ENTRY);
+  const hostPattern = new RegExp(`(?:^|[^A-Za-z0-9])${entryHost}(-v6)?(?=$|[^A-Za-z0-9])`, "i");
+  const hostMatch = text.match(hostPattern);
+  if (!hostMatch) return { entryName: "", exitName: "" };
+
+  const indexMatch =
+    originalName.match(/\b(?:direct|warp)-v[46]\s*0?(\d+)\b/i) ||
+    originalName.match(/\b0?(\d+)\b$/);
+  if (!indexMatch) return { entryName: "", exitName: "" };
+
+  const exitMatch = originalName.match(/\b(?:direct|warp)-v[46]\b/i);
+  const exitName = exitMatch ? exitMatch[0].toLowerCase() : "";
+  const entryIndex = String(parseInt(indexMatch[1], 10));
+  const isV6Entry = Boolean(hostMatch[1]) || new RegExp(`${entryHost}-v6`, "i").test(text);
+
+  return {
+    entryName: `${ENTRY}-${entryIndex}${isV6Entry ? "-v6" : ""}`,
+    exitName,
+  };
+}
 // prettier-ignore
 function jxh(e) { const n = e.reduce((e, n) => { const t = e.find((e) => e.name === n.name); if (t) { t.count++; t.items.push({ ...n, name: `${n.name}${XHFGF}${t.count.toString().padStart(2, "0")}`, }); } else { e.push({ name: n.name, count: 1, items: [{ ...n, name: `${n.name}${XHFGF}01` }], }); } return e; }, []); const t = (typeof Array.prototype.flatMap === 'function' ? n.flatMap((e) => e.items) : n.reduce((acc, e) => acc.concat(e.items), [])); e.splice(0, e.length, ...t); return e; }
 // prettier-ignore
