@@ -14,6 +14,8 @@ WGCF_BIN="${WGCF_BIN:-/root/wgcf/wgcf}"
 WGCF_BASE="${WGCF_BASE:-/root/wgcf}"
 LISTEN_PORT="${LISTEN_PORT:-443}"
 WARP_INTERFACE_COUNT="${WARP_INTERFACE_COUNT:-}"
+WARP_PROFILES_PER_INTERFACE="${WARP_PROFILES_PER_INTERFACE:-}"
+EGRESS_INTERFACE_COUNT="${EGRESS_INTERFACE_COUNT:-}"
 SECONDARY_NETPLAN_PATH="${SECONDARY_NETPLAN_PATH:-/etc/netplan/60-secondary-vnic.yaml}"
 SECONDARY_VNIC_TABLE="${SECONDARY_VNIC_TABLE:-100}"
 SECONDARY_VNIC_TABLE_BASE="${SECONDARY_VNIC_TABLE_BASE:-$SECONDARY_VNIC_TABLE}"
@@ -36,6 +38,7 @@ declare -A WARP_PEERS
 declare -A WARP_ENDPOINTS
 declare -A WARP_PORTS
 declare -A WARP_RESERVED
+declare -a EGRESS_INTERFACE_OPTIONS
 
 die() {
   echo "ERROR: $*" >&2
@@ -149,14 +152,21 @@ config_interface_count() {
 
 config_bind_interface() {
   local tag="$1"
+  local alt_tag="$tag"
+
+  if [[ "$tag" =~ ^warp-ipv([46])-([0-9]+)$ ]]; then
+    alt_tag="warp-v${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  elif [[ "$tag" =~ ^warp-v([46])-([0-9]+)$ ]]; then
+    alt_tag="warp-ipv${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  fi
 
   [[ -f "$CONFIG_PATH" ]] || return 0
-  awk -v tag="$tag" '
+  awk -v tag="$tag" -v alt_tag="$alt_tag" '
     /"tag"[[:space:]]*:/ {
       line = $0
       sub(/.*"tag"[[:space:]]*:[[:space:]]*"/, "", line)
       sub(/".*/, "", line)
-      found = (line == tag)
+      found = (line == tag || line == alt_tag)
     }
     found && /"bind_interface"[[:space:]]*:/ {
       line = $0
@@ -164,6 +174,21 @@ config_bind_interface() {
       sub(/".*/, "", line)
       print line
       exit
+    }
+  ' "$CONFIG_PATH"
+}
+
+config_unique_bind_interfaces() {
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk '
+    /"bind_interface"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"bind_interface"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      if (!(line in seen)) {
+        seen[line] = 1
+        print line
+      }
     }
   ' "$CONFIG_PATH"
 }
@@ -333,6 +358,77 @@ system_non_loopback_interfaces() {
       }
     }
   '
+}
+
+load_egress_interface_options() {
+  local path iface
+  declare -A seen=()
+
+  EGRESS_INTERFACE_OPTIONS=()
+
+  while IFS= read -r iface; do
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen[$iface]-}" ]] && continue
+    EGRESS_INTERFACE_OPTIONS+=("$iface")
+    seen["$iface"]=1
+  done < <(config_unique_bind_interfaces)
+
+  for path in /sys/class/net/*; do
+    [[ -e "$path" ]] || continue
+    iface="${path##*/}"
+    [[ "$iface" != "lo" ]] || continue
+    case "$iface" in
+      br-* | docker* | veth* | virbr* )
+        continue
+        ;;
+    esac
+    [[ -n "${seen[$iface]-}" ]] && continue
+    EGRESS_INTERFACE_OPTIONS+=("$iface")
+    seen["$iface"]=1
+  done
+}
+
+print_egress_interface_options() {
+  local option
+
+  load_egress_interface_options
+  [[ "${#EGRESS_INTERFACE_OPTIONS[@]}" -gt 0 ]] || return 0
+
+  echo "Available egress interfaces:"
+  for option in "${!EGRESS_INTERFACE_OPTIONS[@]}"; do
+    echo "  $((option + 1)). ${EGRESS_INTERFACE_OPTIONS[$option]}"
+  done
+}
+
+normalize_interface_choice() {
+  local value="$1"
+
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    if ((value >= 1 && value <= ${#EGRESS_INTERFACE_OPTIONS[@]})); then
+      printf '%s' "${EGRESS_INTERFACE_OPTIONS[$((value - 1))]}"
+      return 0
+    fi
+    die "Interface number $value is not in the displayed list; enter the interface name if it is missing"
+  fi
+
+  normalize_interface_name "$value"
+}
+
+prompt_egress_interface_choice() {
+  local var_name="$1"
+  local label="$2"
+  local default_value="${3:-}"
+  local value
+
+  if [[ -n "$default_value" ]]; then
+    read -r -p "$label [$default_value]: " value
+    value="${value:-$default_value}"
+  else
+    read -r -p "$label: " value
+  fi
+
+  [[ -n "$value" ]] || die "$label is required"
+  printf -v "$var_name" '%s' "$(normalize_interface_choice "$value")"
 }
 
 secondary_vnic_ipv4_source() {
@@ -589,6 +685,7 @@ configure_egress_interfaces() {
   local force="${1:-false}"
   local index iface_var previous_iface_var default_value
 
+  print_egress_interface_options
   for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
     iface_var="EGRESS_${index}_INTERFACE"
     if [[ "$force" != "true" && -n "${!iface_var-}" ]]; then
@@ -608,12 +705,55 @@ configure_egress_interfaces() {
       continue
     fi
     if [[ -n "$default_value" ]]; then
-      prompt "$iface_var" "Egress interface name/index for WARP slot $index (repeat allowed)" "$default_value"
+      prompt_egress_interface_choice "$iface_var" "Egress interface number/name for WARP slot $index (repeat allowed)" "$default_value"
     else
-      prompt "$iface_var" "Egress interface name/index for WARP slot $index (repeat allowed)"
+      prompt_egress_interface_choice "$iface_var" "Egress interface number/name for WARP slot $index (repeat allowed)"
     fi
-    printf -v "$iface_var" '%s' "$(normalize_interface_name "${!iface_var}")"
   done
+}
+
+configure_generated_egress_interfaces() {
+  local interface_count="$1"
+  local profiles_per_interface="$2"
+  local old_slot_count="${WARP_INTERFACE_COUNT:-0}"
+  local interface_index profile_index slot iface_var default_var default_value
+  local -a existing_ifaces selected_ifaces
+
+  mapfile -t existing_ifaces < <(config_unique_bind_interfaces)
+  print_egress_interface_options
+
+  for ((slot = 1; slot <= old_slot_count; slot++)); do
+    iface_var="EGRESS_${slot}_INTERFACE"
+    unset "$iface_var"
+  done
+
+  for ((interface_index = 1; interface_index <= interface_count; interface_index++)); do
+    default_var="EGRESS_${interface_index}_INTERFACE"
+    default_value="${!default_var-}"
+    [[ -n "$default_value" ]] || default_value="${existing_ifaces[$((interface_index - 1))]-}"
+    [[ -n "$default_value" ]] || default_value="${EGRESS_INTERFACE_OPTIONS[$((interface_index - 1))]-}"
+
+    iface_var="SELECTED_EGRESS_${interface_index}_INTERFACE"
+    if [[ -n "$default_value" ]]; then
+      prompt_egress_interface_choice "$iface_var" "Egress interface $interface_index number/name" "$default_value"
+    else
+      prompt_egress_interface_choice "$iface_var" "Egress interface $interface_index number/name"
+    fi
+    selected_ifaces[$interface_index]="${!iface_var}"
+  done
+
+  WARP_INTERFACE_COUNT=$((interface_count * profiles_per_interface))
+
+  for ((interface_index = 1; interface_index <= interface_count; interface_index++)); do
+    for ((profile_index = 1; profile_index <= profiles_per_interface; profile_index++)); do
+      slot=$(((interface_index - 1) * profiles_per_interface + profile_index))
+      iface_var="EGRESS_${slot}_INTERFACE"
+      printf -v "$iface_var" '%s' "${selected_ifaces[$interface_index]}"
+    done
+  done
+
+  echo "Generating $profiles_per_interface IPv4 WARP and $profiles_per_interface IPv6 WARP per egress interface."
+  echo "Total internal WARP slots: $WARP_INTERFACE_COUNT"
 }
 
 prompt_keep_existing() {
@@ -1703,20 +1843,34 @@ regenerate_all_warp_profiles() {
 }
 
 prepare_new_config_inputs() {
-  local existing_interface_count default_domain_v4 default_domain_v6 default_interface_count
+  local existing_interface_count default_domain_v4 default_domain_v6
+  local default_egress_interface_count default_profiles_per_interface
+  local -a existing_ifaces
 
   existing_interface_count="$(config_interface_count)"
+  mapfile -t existing_ifaces < <(config_unique_bind_interfaces)
   default_domain_v4="${DOMAIN_V4:-xxx.com}"
   default_domain_v6="${DOMAIN_V6:-xxx-v6.com}"
-  default_interface_count="${WARP_INTERFACE_COUNT:-${existing_interface_count:-2}}"
+  default_egress_interface_count="${EGRESS_INTERFACE_COUNT:-${#existing_ifaces[@]}}"
+  if [[ ! "$default_egress_interface_count" =~ ^[1-9][0-9]*$ ]]; then
+    default_egress_interface_count="2"
+  fi
+  default_profiles_per_interface="${WARP_PROFILES_PER_INTERFACE:-}"
+  if [[ -z "$default_profiles_per_interface" && -n "$existing_interface_count" && "${#existing_ifaces[@]}" -gt 0 ]]; then
+    default_profiles_per_interface="$((existing_interface_count / ${#existing_ifaces[@]}))"
+    [[ "$default_profiles_per_interface" -gt 0 ]] || default_profiles_per_interface="1"
+  fi
+  [[ -n "$default_profiles_per_interface" ]] || default_profiles_per_interface="1"
 
   prompt DOMAIN_V4 "IPv4/SNI domain" "$default_domain_v4"
   prompt DOMAIN_V6 "IPv6/SNI domain" "$default_domain_v6"
   prompt ACME_EMAIL "ACME email" "$ACME_EMAIL"
   prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "$CF_TOKEN" true
-  prompt WARP_INTERFACE_COUNT "How many WARP slots" "$default_interface_count"
-  validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP interface count"
-  configure_egress_interfaces true
+  prompt WARP_PROFILES_PER_INTERFACE "WARP profiles per egress interface" "$default_profiles_per_interface"
+  validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP profiles per egress interface"
+  prompt EGRESS_INTERFACE_COUNT "How many egress interfaces" "$default_egress_interface_count"
+  validate_positive_integer "$EGRESS_INTERFACE_COUNT" "Egress interface count"
+  configure_generated_egress_interfaces "$EGRESS_INTERFACE_COUNT" "$WARP_PROFILES_PER_INTERFACE"
 }
 
 generate_new_config() {
@@ -1798,7 +1952,7 @@ main_menu() {
     echo "==== Sing-box HY2 + WARP Menu ===="
     echo "Current IPv4/SNI: $DOMAIN_V4"
     echo "Current IPv6/SNI: $DOMAIN_V6"
-    echo "Current WARP slots: $WARP_INTERFACE_COUNT"
+    echo "Current WARP slot total: $WARP_INTERFACE_COUNT"
     echo "Current WARP mode: $CURRENT_WARP_FLAVOR"
     echo "1. 重新生成密碼"
     echo "2. 重新生成所有 WARP"
@@ -1864,9 +2018,8 @@ load_initial_state() {
   [[ -n "$DOMAIN_V6" ]] || prompt DOMAIN_V6 "IPv6/SNI domain" "xxx-v6.com"
   [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
   [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
-  [[ -n "$WARP_INTERFACE_COUNT" ]] || prompt WARP_INTERFACE_COUNT "How many WARP slots" "${existing_interface_count:-2}"
-  validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP interface count"
-  configure_egress_interfaces
+  [[ -n "$WARP_INTERFACE_COUNT" ]] || WARP_INTERFACE_COUNT="${existing_interface_count:-2}"
+  validate_positive_integer "$WARP_INTERFACE_COUNT" "WARP slot count"
 
   load_passwords_from_config
   CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
