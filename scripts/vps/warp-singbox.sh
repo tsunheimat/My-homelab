@@ -256,6 +256,125 @@ config_unique_bind_interfaces() {
   ' "$CONFIG_PATH"
 }
 
+config_direct_representative_slots() {
+  local family="$1"
+  local slot_count="${WARP_INTERFACE_COUNT:-0}"
+  local index iface
+  declare -A seen_ifaces=()
+
+  [[ "$slot_count" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  for ((index = 1; index <= slot_count; index++)); do
+    iface="$(config_bind_interface "direct-v${family}-${index}")"
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen_ifaces[$iface]-}" ]] && continue
+    seen_ifaces["$iface"]=1
+    printf '%s\n' "$index"
+  done
+}
+
+config_direct_representative_user_name() {
+  local family="$1"
+  local direct_index="$2"
+  local current=0 slot
+
+  while IFS= read -r slot; do
+    [[ -n "$slot" ]] || continue
+    ((current += 1))
+    if ((current == direct_index)); then
+      printf 'direct-v%s-%s' "$family" "$slot"
+      return 0
+    fi
+  done < <(config_direct_representative_slots "$family")
+}
+
+direct_egress_slot_indexes() {
+  local slot_count="${WARP_INTERFACE_COUNT:-0}"
+  local index iface iface_var
+  declare -A seen_ifaces=()
+
+  [[ "$slot_count" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  for ((index = 1; index <= slot_count; index++)); do
+    iface="${EGRESS_IFACES[$index]-}"
+    if [[ -z "$iface" ]]; then
+      iface_var="EGRESS_${index}_INTERFACE"
+      iface="${!iface_var-}"
+    fi
+    [[ -n "$iface" ]] || iface="$(config_bind_interface "direct-v4-${index}")"
+    [[ -n "$iface" ]] || iface="$(config_bind_interface "$(warp_profile_tag 4 "$index")")"
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen_ifaces[$iface]-}" ]] && continue
+    seen_ifaces["$iface"]=1
+    printf '%s\n' "$index"
+  done
+}
+
+direct_interface_count() {
+  local count=0 index iface slot slot_count="${WARP_INTERFACE_COUNT:-0}"
+  local -a unique_ifaces
+  declare -A seen_ifaces=()
+
+  [[ "$slot_count" =~ ^[1-9][0-9]*$ ]] || slot_count=0
+
+  while IFS= read -r slot; do
+    [[ -n "$slot" ]] || continue
+    ((count += 1))
+  done < <(direct_egress_slot_indexes)
+  if ((count > 0)); then
+    printf '%s' "$count"
+    return 0
+  fi
+
+  if [[ "${EGRESS_INTERFACE_COUNT:-}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s' "$EGRESS_INTERFACE_COUNT"
+    return 0
+  fi
+
+  for ((index = 1; index <= slot_count; index++)); do
+    iface="${EGRESS_IFACES[$index]-}"
+    [[ -n "$iface" ]] || continue
+    [[ -n "${seen_ifaces[$iface]-}" ]] && continue
+    seen_ifaces["$iface"]=1
+    ((count += 1))
+  done
+  if ((count > 0)); then
+    printf '%s' "$count"
+    return 0
+  fi
+
+  mapfile -t unique_ifaces < <(config_unique_bind_interfaces)
+  if ((${#unique_ifaces[@]} > 0)); then
+    printf '%s' "${#unique_ifaces[@]}"
+    return 0
+  fi
+
+  count=0
+  while IFS= read -r slot; do
+    [[ -n "$slot" ]] || continue
+    ((count += 1))
+  done < <(config_direct_representative_slots 4)
+  if ((count > 0)); then
+    printf '%s' "$count"
+    return 0
+  fi
+
+  if ((slot_count > 0)) && [[ "${WARP_PROFILES_PER_INTERFACE:-}" =~ ^[1-9][0-9]*$ ]]; then
+    count=$((slot_count / WARP_PROFILES_PER_INTERFACE))
+    if ((count > 0)); then
+      printf '%s' "$count"
+      return 0
+    fi
+  fi
+
+  if ((slot_count > 0)); then
+    printf '%s' "$slot_count"
+    return 0
+  fi
+
+  printf '1'
+}
+
 validate_positive_integer() {
   local value="$1"
   local label="$2"
@@ -2055,23 +2174,26 @@ render_sni_domain_array() {
 proxy_sni_name() {
   local base_name="$1"
   local index="$2"
-  local interface_index
+  local domain="${3:-}"
+  local label interface_index
 
-  if ((index == 1)); then
-    printf '%s' "$base_name"
+  label="${domain%%.*}"
+  if [[ "$label" =~ -([0-9]+)-v6$ ]]; then
+    printf '%s-%s-v6' "$base_name" "${BASH_REMATCH[1]}"
     return 0
   fi
 
-  if ((index == 2)); then
-    printf '%s-v6' "$base_name"
+  if [[ "$label" =~ -([0-9]+)$ ]]; then
+    printf '%s-%s' "$base_name" "${BASH_REMATCH[1]}"
     return 0
   fi
 
+  # Fallback for manual, non-numbered SNI domains: indexes are paired by interface.
   interface_index=$(((index + 1) / 2))
   if ((index % 2 == 1)); then
-    printf '%s-if%s' "$base_name" "$interface_index"
+    printf '%s-%s' "$base_name" "$interface_index"
   else
-    printf '%s-if%s-v6' "$base_name" "$interface_index"
+    printf '%s-%s-v6' "$base_name" "$interface_index"
   fi
 }
 
@@ -2093,32 +2215,56 @@ init_runtime() {
 }
 
 load_passwords_from_config() {
-  local family kind index user_name existing legacy
+  local family index user_name existing legacy direct_count existing_user
+
+  direct_count="$(direct_interface_count)"
 
   for family in 4 6; do
-    for kind in direct warp; do
-      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-        user_name="${kind}-v${family}-${index}"
+    for ((index = 1; index <= direct_count; index++)); do
+      user_name="direct-v${family}-${index}"
+      existing_user="$(config_direct_representative_user_name "$family" "$index")"
+      [[ -n "$existing_user" ]] || existing_user="$user_name"
+      existing="$(config_user_password "$existing_user")"
+      if [[ -z "$existing" && "$existing_user" != "$user_name" ]]; then
         existing="$(config_user_password "$user_name")"
-        if [[ -z "$existing" ]]; then
-          legacy="$(legacy_user_name "$user_name")"
-          [[ -z "$legacy" ]] || existing="$(config_user_password "$legacy")"
-        fi
-        USER_PASSWORDS[$user_name]="$(existing_or_rand_password "$existing")"
-      done
+      fi
+      if [[ -z "$existing" ]]; then
+        legacy="$(legacy_user_name "$user_name")"
+        [[ -z "$legacy" ]] || existing="$(config_user_password "$legacy")"
+      fi
+      USER_PASSWORDS[$user_name]="$(existing_or_rand_password "$existing")"
+    done
+  done
+
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      user_name="warp-v${family}-${index}"
+      existing="$(config_user_password "$user_name")"
+      if [[ -z "$existing" ]]; then
+        legacy="$(legacy_user_name "$user_name")"
+        [[ -z "$legacy" ]] || existing="$(config_user_password "$legacy")"
+      fi
+      USER_PASSWORDS[$user_name]="$(existing_or_rand_password "$existing")"
     done
   done
 }
 
 regenerate_passwords() {
-  local family kind index user_name
+  local family index user_name direct_count
+
+  direct_count="$(direct_interface_count)"
 
   for family in 4 6; do
-    for kind in direct warp; do
-      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-        user_name="${kind}-v${family}-${index}"
-        USER_PASSWORDS[$user_name]="$(rand_password)"
-      done
+    for ((index = 1; index <= direct_count; index++)); do
+      user_name="direct-v${family}-${index}"
+      USER_PASSWORDS[$user_name]="$(rand_password)"
+    done
+  done
+
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      user_name="warp-v${family}-${index}"
+      USER_PASSWORDS[$user_name]="$(rand_password)"
     done
   done
 }
@@ -2380,45 +2526,65 @@ render_warp_endpoints() {
 }
 
 render_hysteria_users() {
-  local family kind index user_name password first
+  local family index user_name password first direct_count
+
+  direct_count="$(direct_interface_count)"
 
   first=true
   for family in 4 6; do
-    for kind in direct warp; do
-      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-        user_name="${kind}-v${family}-${index}"
-        password="$(json_escape "$(user_password "$user_name")")"
-        if [[ "$first" == "true" ]]; then
-          first=false
-        else
-          echo ","
-        fi
-        cat <<EOF
+    for ((index = 1; index <= direct_count; index++)); do
+      user_name="direct-v${family}-${index}"
+      password="$(json_escape "$(user_password "$user_name")")"
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      cat <<EOF
         {
           "name": "$user_name",
           "password": "$password"
         }
 EOF
-      done
+    done
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      user_name="warp-v${family}-${index}"
+      password="$(json_escape "$(user_password "$user_name")")"
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      cat <<EOF
+        {
+          "name": "$user_name",
+          "password": "$password"
+        }
+EOF
     done
   done
 }
 
 render_direct_outbounds() {
-  local family index tag resolver bind_key bind_address first
+  local family direct_index slot_index tag resolver bind_key bind_address first
+  local -a direct_slots
+
+  mapfile -t direct_slots < <(direct_egress_slot_indexes)
 
   first=true
   for family in 4 6; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-      tag="direct-v${family}-${index}"
+    direct_index=0
+    for slot_index in "${direct_slots[@]}"; do
+      ((direct_index += 1))
+      tag="direct-v${family}-${direct_index}"
       if [[ "$family" == "4" ]]; then
         resolver="ipv4_only"
         bind_key="inet4_bind_address"
-        bind_address="${EGRESS_V4_ADDRS[$index]}"
+        bind_address="${EGRESS_V4_ADDRS[$slot_index]}"
       else
         resolver="ipv6_only"
         bind_key="inet6_bind_address"
-        bind_address="${EGRESS_V6_ADDRS[$index]}"
+        bind_address="${EGRESS_V6_ADDRS[$slot_index]}"
       fi
 
       if [[ "$first" == "true" ]]; then
@@ -2430,7 +2596,7 @@ render_direct_outbounds() {
     {
       "type": "direct",
       "tag": "$tag",
-      "bind_interface": "${EGRESS_IFACES[$index]}",
+      "bind_interface": "${EGRESS_IFACES[$slot_index]}",
       "$bind_key": "$bind_address",
       "domain_resolver": {
         "server": "cf-dns",
@@ -2443,44 +2609,66 @@ EOF
 }
 
 render_auth_user_array() {
-  local family kind index user_name first
+  local family index user_name first direct_count
 
   family="$1"
+  direct_count="$(direct_interface_count)"
   first=true
-  for kind in direct warp; do
-    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-      user_name="${kind}-v${family}-${index}"
-      if [[ "$first" == "true" ]]; then
-        first=false
-      else
-        echo ","
-      fi
-      printf '          "%s"' "$user_name"
-    done
+  for ((index = 1; index <= direct_count; index++)); do
+    user_name="direct-v${family}-${index}"
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      echo ","
+    fi
+    printf '          "%s"' "$user_name"
+  done
+  for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+    user_name="warp-v${family}-${index}"
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      echo ","
+    fi
+    printf '          "%s"' "$user_name"
   done
   echo
 }
 
 render_user_outbound_rules() {
-  local family kind index user_name first
+  local family index user_name first direct_count
+
+  direct_count="$(direct_interface_count)"
 
   first=true
   for family in 4 6; do
-    for kind in direct warp; do
-      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-        user_name="${kind}-v${family}-${index}"
-        if [[ "$first" == "true" ]]; then
-          first=false
-        else
-          echo ","
-        fi
-        cat <<EOF
+    for ((index = 1; index <= direct_count; index++)); do
+      user_name="direct-v${family}-${index}"
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      cat <<EOF
       {
         "auth_user": "$user_name",
         "outbound": "$user_name"
       }
 EOF
-      done
+    done
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      user_name="warp-v${family}-${index}"
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        echo ","
+      fi
+      cat <<EOF
+      {
+        "auth_user": "$user_name",
+        "outbound": "$user_name"
+      }
+EOF
     done
   done
 }
@@ -2611,8 +2799,10 @@ EOF
 
 print_proxy_information() {
   local country node_name server sni_name server_index family kind index user_name password display_index
+  local direct_count
 
   ensure_sni_domains
+  direct_count="$(direct_interface_count)"
   prompt country "Country"
   prompt node_name "Node name"
 
@@ -2620,15 +2810,22 @@ print_proxy_information() {
   echo "Proxy information:"
   for ((server_index = 1; server_index <= SNI_DOMAIN_COUNT; server_index++)); do
     server="${SNI_DOMAINS[$server_index]}"
-    sni_name="$(proxy_sni_name "$node_name" "$server_index")"
+    sni_name="$(proxy_sni_name "$node_name" "$server_index" "$server")"
     for family in 4 6; do
-      for kind in direct warp; do
-        for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
-          user_name="${kind}-v${family}-${index}"
-          password="$(user_password "$user_name")"
-          printf -v display_index '%02d' "$index"
-          echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
-        done
+      kind="direct"
+      for ((index = 1; index <= direct_count; index++)); do
+        user_name="${kind}-v${family}-${index}"
+        password="$(user_password "$user_name")"
+        printf -v display_index '%02d' "$index"
+        echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
+      done
+
+      kind="warp"
+      for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+        user_name="${kind}-v${family}-${index}"
+        password="$(user_password "$user_name")"
+        printf -v display_index '%02d' "$index"
+        echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
       done
     done
   done

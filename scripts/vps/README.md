@@ -7,12 +7,12 @@ This directory contains `warp-singbox.sh`, an interactive helper script for buil
 - a configurable number of Cloudflare WARP WireGuard endpoints per egress interface
 - 2 or more SNI/ACME domains, up to 2 domains per selected egress interface
 - routing by Hysteria2 user:
-  - `direct-v4-N` -> direct IPv4 for WARP slot `N`
+  - `direct-v4-N` -> direct IPv4 for egress interface `N`
   - `warp-v4-N` -> WARP IPv4 profile `N`
-  - `direct-v6-N` -> direct IPv6 for WARP slot `N`
+  - `direct-v6-N` -> direct IPv6 for egress interface `N`
   - `warp-v6-N` -> WARP IPv6 profile `N`
 
-Menu option `6` asks how many WARP profiles to create per egress interface. For example, `3` means every selected real interface gets `3` IPv4 WARP profiles and `3` IPv6 WARP profiles. The script then expands that into internal slot numbers such as `warp-v4-1`, `warp-v4-2`, and so on.
+Menu option `6` asks how many WARP profiles to create per egress interface. For example, `3` means every selected real interface gets `3` IPv4 WARP profiles and `3` IPv6 WARP profiles. The script then expands that into internal slot numbers such as `warp-v4-1`, `warp-v4-2`, and so on. Direct entries stay one per selected real interface.
 
 When the generator asks for an egress interface, it prints a numbered interface list. Numeric input means that displayed list number, not the Linux link index from `ip link`.
 
@@ -94,8 +94,8 @@ Proxy output uses this name pattern:
 oracle <country> <name> <type> <num>
 ```
 
-For IPv6 entries, the `<name>` value gets `-v6` appended.
-Each proxy information run prints `4 * SNI_DOMAIN_COUNT * WARP_INTERFACE_COUNT` entries. With the default two SNI domains, that is `8 * WARP_INTERFACE_COUNT`. `WARP_INTERFACE_COUNT` is the expanded internal slot total, so `2` egress interfaces with `3` profiles each becomes `6` internal slots.
+The `<name>` value is the node name plus the SNI slot number, such as `sg-arm1-1`, `sg-arm1-2`, or `sg-arm1-1-v6`. Numbered SNI hostnames like `sg-arm1-2-v6.example.com` are used directly for the number; manual non-numbered domains fall back to paired slot indexes.
+Each proxy information run prints direct entries once per egress interface and WARP entries once per internal WARP slot. The total is `2 * SNI_DOMAIN_COUNT * (EGRESS_INTERFACE_COUNT + WARP_INTERFACE_COUNT)`. For example, `2` egress interfaces with `3` profiles each has `2` direct indexes and `6` WARP indexes.
 
 ## Default warp-yg
 
@@ -174,7 +174,7 @@ WARP_GO_BIN=/custom/path/warp-go WARP_YG_BASE=/custom/warp-yg /etc/sing-box/warp
 | `LISTEN_PORT` | `443` | Hysteria2 listen port |
 | `WARP_PROFILES_PER_INTERFACE` | `1` or derived from existing config | Number of IPv4 and IPv6 WARP profiles to generate per selected egress interface in menu option `6` |
 | `EGRESS_INTERFACE_COUNT` | existing unique interfaces or `2` | Number of real egress interfaces selected in menu option `6` |
-| `WARP_INTERFACE_COUNT` | auto-detected or expanded by option `6` | Internal total WARP/direct slot count |
+| `WARP_INTERFACE_COUNT` | auto-detected or expanded by option `6` | Internal total WARP slot count; direct entries are derived from unique egress interfaces |
 | `SECONDARY_NETPLAN_PATH` | `/etc/netplan/60-secondary-vnic.yaml` | Netplan path for secondary VNIC policy routing |
 | `SECONDARY_VNIC_COUNT` | `WARP_INTERFACE_COUNT` or `2` | Highest secondary VNIC index considered by option `7`; repeated real interfaces are deduplicated |
 | `SECONDARY_VNIC_TABLE_BASE` | `100` | Routing table base; primary IPv6 uses `99`, interface 2 uses `100`, interface 3 uses `101`, etc. |
