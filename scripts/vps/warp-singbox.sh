@@ -469,10 +469,8 @@ warp_profile_tag() {
 warp_profile_label() {
   local warp_family="$1"
   local index="$2"
-  local outbound_family
 
-  outbound_family="$(warp_outbound_family_for_slot "$warp_family" "$index")"
-  printf 'warp-v%s-%s (v%s out -> v%s WARP)' "$warp_family" "$index" "$outbound_family" "$warp_family"
+  printf 'warp-v%s-%s' "$warp_family" "$index"
 }
 
 interface_address() {
@@ -2879,7 +2877,7 @@ EOF
 }
 
 print_proxy_information() {
-  local country node_name server sni_name server_index family kind index user_name password display_index outbound_family
+  local country node_name server sni_name server_index family kind index user_name password display_index
   local direct_count
 
   ensure_sni_domains
@@ -2908,8 +2906,7 @@ print_proxy_information() {
         user_name="${kind}-v${family}-${index}"
         password="$(user_password "$user_name")"
         printf -v display_index '%02d' "$index"
-        outbound_family="$(warp_outbound_family_for_slot "$family" "$index")"
-        echo "{ name: \"oracle $country $sni_name ${kind}-v${outbound_family}-out-v${family}-warp $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
+        echo "{ name: \"oracle $country $sni_name ${kind}-v${family} $display_index\", type: hysteria2, server: $server, port: $LISTEN_PORT, password: \"$password\", sni: \"$server\", skip-cert-verify: false }"
       done
     done
   done
@@ -2943,7 +2940,7 @@ prepare_new_config_inputs() {
   fi
   [[ -n "$default_profiles_per_interface" ]] || default_profiles_per_interface="2"
 
-  prompt WARP_PROFILES_PER_INTERFACE "WARP source slots per egress interface (2 gives v4-out and v6-out)" "$default_profiles_per_interface"
+  prompt WARP_PROFILES_PER_INTERFACE "WARP source slots per egress interface (2 enables all four v4/v6 combinations)" "$default_profiles_per_interface"
   validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP source slots per egress interface"
   prompt EGRESS_INTERFACE_COUNT "How many egress interfaces" "$default_egress_interface_count"
   validate_positive_integer "$EGRESS_INTERFACE_COUNT" "Egress interface count"

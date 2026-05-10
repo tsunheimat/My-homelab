@@ -12,7 +12,7 @@ This directory contains `warp-singbox.sh`, an interactive helper script for buil
   - `direct-v6-N` -> direct IPv6 for egress interface `N`
   - `warp-v6-N` -> WARP tunnel carrying IPv6 traffic for source slot `N`
 
-Menu option `6` asks how many WARP source slots to create per egress interface. Each source slot gets both an IPv4 WARP tunnel profile and an IPv6 WARP tunnel profile. With `2` source slots per egress interface, the first four WARP choices are:
+Menu option `6` asks how many WARP source slots to create per egress interface. Each source slot still creates the usual `warp-v4-N` and `warp-v6-N` entries; the slot order is what changes. With `2` source slots per egress interface, the first four WARP choices are:
 
 1. v4 out -> v4 WARP
 2. v4 out -> v6 WARP
