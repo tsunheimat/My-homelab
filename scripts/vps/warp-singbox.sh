@@ -50,6 +50,8 @@ declare -A WARP_PORTS
 declare -A WARP_RESERVED
 declare -a SNI_DOMAINS
 declare -a EGRESS_INTERFACE_OPTIONS
+ACTIVE_WARP_RESTORE_DIR=""
+ACTIVE_WARP_RESTORE_BACKUP=""
 
 die() {
   echo "ERROR: $*" >&2
@@ -2376,6 +2378,18 @@ warp_singbox_path_for() {
   esac
 }
 
+warp_profile_dir_for() {
+  local flavor="$1"
+  local tag="$2"
+
+  case "$flavor" in
+    warp-yg) printf '%s/%s' "$WARP_YG_BASE" "$tag" ;;
+    warp-go) printf '%s/%s' "$WARP_GO_BASE" "$tag" ;;
+    wgcf) printf '%s/%s' "$WGCF_BASE" "$tag" ;;
+    *) die "Unsupported WARP flavor: $flavor" ;;
+  esac
+}
+
 set_warp_profile_paths() {
   local flavor="$1"
   local family index key tag
@@ -2476,6 +2490,60 @@ missing_warp_tags() {
   done
 }
 
+describe_warp_profile_issue() {
+  local flavor="$1"
+  local family="$2"
+  local index="$3"
+  local tag key profile singbox private_key address peer
+
+  tag="$(warp_profile_tag "$family" "$index")"
+  key="${family}:${index}"
+  profile="$(warp_profile_path_for "$flavor" "$tag")"
+  singbox="$(warp_singbox_path_for "$flavor" "$tag")"
+
+  if [[ ! -f "$profile" ]]; then
+    printf '%s missing profile %s' "$tag" "$profile"
+    return 0
+  fi
+
+  private_key="$(profile_value "$profile" "PrivateKey")"
+  if [[ "$family" == "4" ]]; then
+    address="$(profile_address_v4 "$profile")"
+  else
+    address="$(profile_address_v6 "$profile")"
+  fi
+  peer="$(profile_value "$profile" "PublicKey")"
+
+  if [[ -z "$private_key" ]]; then
+    printf '%s profile is missing PrivateKey: %s' "$tag" "$profile"
+  elif [[ -z "$address" ]]; then
+    printf '%s profile is missing IPv%s Address: %s' "$tag" "$family" "$profile"
+  elif [[ -z "$peer" ]]; then
+    printf '%s profile is missing peer PublicKey: %s' "$tag" "$profile"
+  elif [[ "$flavor" != "wgcf" && ! -f "$singbox" ]]; then
+    printf '%s missing sing-box export %s' "$tag" "$singbox"
+  else
+    printf '%s profile issue could not be identified' "$tag"
+  fi
+}
+
+first_warp_profile_issue() {
+  local flavor="${1:-$CURRENT_WARP_FLAVOR}"
+  local family index issue
+
+  set_warp_profile_paths "$flavor"
+
+  for family in 4 6; do
+    for ((index = 1; index <= WARP_INTERFACE_COUNT; index++)); do
+      issue="$(describe_warp_profile_issue "$flavor" "$family" "$index")"
+      if [[ "$issue" != *"profile issue could not be identified" ]]; then
+        printf '%s' "$issue"
+        return 0
+      fi
+    done
+  done
+}
+
 ensure_warp_profile_state() {
   local -a tags
 
@@ -2510,6 +2578,46 @@ clear_warp_profile() {
   esac
 }
 
+restore_active_warp_profile() {
+  local status=$?
+
+  if [[ -n "$ACTIVE_WARP_RESTORE_DIR" && -n "$ACTIVE_WARP_RESTORE_BACKUP" && -d "$ACTIVE_WARP_RESTORE_BACKUP" ]]; then
+    rm -rf "$ACTIVE_WARP_RESTORE_DIR"
+    mkdir -p "$ACTIVE_WARP_RESTORE_DIR"
+    cp -a "$ACTIVE_WARP_RESTORE_BACKUP/." "$ACTIVE_WARP_RESTORE_DIR/"
+    echo "Restored previous WARP profile directory after failed generation: $ACTIVE_WARP_RESTORE_DIR" >&2
+  fi
+
+  exit "$status"
+}
+
+trap restore_active_warp_profile EXIT
+
+begin_warp_profile_update() {
+  local tag="$1"
+  local dir backup
+
+  ACTIVE_WARP_RESTORE_DIR=""
+  ACTIVE_WARP_RESTORE_BACKUP=""
+
+  dir="$(warp_profile_dir_for "$CURRENT_WARP_FLAVOR" "$tag")"
+  [[ -d "$dir" ]] || return 0
+
+  backup="$(mktemp -d)"
+  cp -a "$dir/." "$backup/"
+  ACTIVE_WARP_RESTORE_DIR="$dir"
+  ACTIVE_WARP_RESTORE_BACKUP="$backup"
+}
+
+commit_warp_profile_update() {
+  if [[ -n "$ACTIVE_WARP_RESTORE_BACKUP" ]]; then
+    rm -rf "$ACTIVE_WARP_RESTORE_BACKUP"
+  fi
+
+  ACTIVE_WARP_RESTORE_DIR=""
+  ACTIVE_WARP_RESTORE_BACKUP=""
+}
+
 prepare_warp_generation() {
   WARP_TOOL="$CURRENT_WARP_FLAVOR"
   ensure_warp_tools
@@ -2523,8 +2631,10 @@ regenerate_warp_tags() {
   prepare_warp_generation
   for tag in "$@"; do
     echo "Regenerating $tag with $CURRENT_WARP_FLAVOR..."
+    begin_warp_profile_update "$tag"
     clear_warp_profile "$tag"
     make_warp_profile "$tag"
+    commit_warp_profile_update
   done
 }
 
@@ -2880,6 +2990,9 @@ print_proxy_information() {
   local country node_name server sni_name server_index family kind index user_name password display_index
   local direct_count
 
+  if [[ -z "${SNI_DOMAINS[1]-}" || -z "${SNI_DOMAINS[2]-}" ]]; then
+    prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
+  fi
   ensure_sni_domains
   direct_count="$(direct_interface_count)"
   prompt country "Country"
@@ -2911,6 +3024,19 @@ print_proxy_information() {
     done
   done
   echo
+}
+
+ensure_config_write_inputs() {
+  if [[ -z "${SNI_DOMAINS[1]-}" || -z "${SNI_DOMAINS[2]-}" ]]; then
+    prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
+  fi
+
+  SNI_DOMAIN_COUNT="$(sni_domain_count)"
+  ((SNI_DOMAIN_COUNT >= 2)) || SNI_DOMAIN_COUNT=2
+  sync_primary_sni_domains
+
+  [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
+  [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
 }
 
 regenerate_all_warp_profiles() {
@@ -2962,6 +3088,7 @@ generate_new_config() {
 
 change_sni() {
   prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
+  ensure_config_write_inputs
   write_singbox_config
   echo "SNI updated."
 }
@@ -3014,6 +3141,7 @@ regenerate_selected_warp_menu() {
     return 0
   fi
 
+  ensure_config_write_inputs
   write_singbox_config
   echo "Selected WARP profile(s) regenerated."
 }
@@ -3039,11 +3167,13 @@ main_menu() {
 
     case "$choice" in
       1)
+        ensure_config_write_inputs
         regenerate_passwords
         write_singbox_config
         echo "Passwords regenerated."
         ;;
       2)
+        ensure_config_write_inputs
         regenerate_all_warp_profiles
         write_singbox_config
         echo "All WARP profiles regenerated."
@@ -3073,8 +3203,61 @@ main_menu() {
   done
 }
 
+usage() {
+  cat <<EOF
+Usage: $0 [command]
+
+Commands:
+  menu                 Open the interactive menu (default)
+  generate-config      Prompt for a new full config, regenerate all WARP profiles, write config.json
+  warp-generate        Regenerate all WARP profiles for the current slot count
+  warp-generate-all    Alias for warp-generate
+  warp-generate TAG... Regenerate specific WARP profile tags, for example warp-ipv4-1
+  write-config         Rewrite config.json from the current generated profiles
+  check                Check the current sing-box config
+  help                 Show this help
+EOF
+}
+
+run_command() {
+  local command="${1:-menu}"
+  shift || true
+
+  case "$command" in
+    menu)
+      main_menu
+      ;;
+    generate-config | new-config)
+      generate_new_config
+      ;;
+    warp-generate | warp-generate-all | generate-warp)
+      if (($# > 0)); then
+        regenerate_warp_tags "$@"
+      else
+        regenerate_all_warp_profiles
+      fi
+      echo "WARP profiles regenerated."
+      ;;
+    write-config)
+      ensure_config_write_inputs
+      write_singbox_config
+      echo "Config rewritten from generated profiles."
+      ;;
+    check)
+      sing-box check -c "$CONFIG_PATH"
+      ;;
+    help | -h | --help)
+      usage
+      ;;
+    *)
+      usage >&2
+      die "Unknown command: $command"
+      ;;
+  esac
+}
+
 load_initial_state() {
-  local existing_email existing_token existing_interface_count
+  local existing_email existing_token existing_interface_count issue
 
   load_sni_domains_from_config
   load_sni_domains_from_env
@@ -3092,15 +3275,6 @@ load_initial_state() {
   fi
   [[ -z "$WARP_PROFILES_PER_INTERFACE" ]] || validate_positive_integer "$WARP_PROFILES_PER_INTERFACE" "WARP source slots per egress interface"
 
-  if [[ -z "${SNI_DOMAINS[1]-}" || -z "${SNI_DOMAINS[2]-}" ]]; then
-    prompt_sni_domains_menu "$(sni_domain_max)" "$(sni_domain_count)"
-  fi
-  SNI_DOMAIN_COUNT="$(sni_domain_count)"
-  ((SNI_DOMAIN_COUNT >= 2)) || SNI_DOMAIN_COUNT=2
-  sync_primary_sni_domains
-  [[ -n "$ACME_EMAIL" ]] || prompt ACME_EMAIL "ACME email"
-  [[ -n "$CF_TOKEN" ]] || prompt_keep_existing CF_TOKEN "Cloudflare DNS API token" "" true
-
   load_passwords_from_config
   CURRENT_WARP_FLAVOR="$(detect_existing_warp_flavor)"
   report_warp_generator_status
@@ -3108,7 +3282,9 @@ load_initial_state() {
   if load_warp_profile_state "$CURRENT_WARP_FLAVOR"; then
     echo "Loaded existing WARP profiles from $CURRENT_WARP_FLAVOR."
   else
-    echo "WARNING: No complete generated WARP profile set found. Use menu option 2 to regenerate WARP or option 6 to generate a new config."
+    issue="$(first_warp_profile_issue "$CURRENT_WARP_FLAVOR")"
+    echo "WARNING: Current WARP profile set is incomplete for $CURRENT_WARP_FLAVOR: ${issue:-unknown issue}."
+    echo "Use menu option 2 to regenerate all WARP profiles, option 3 to regenerate selected profiles, or option 6 to generate a new config."
   fi
 }
 
@@ -3116,7 +3292,7 @@ main() {
   require_base_commands
   init_runtime
   load_initial_state
-  main_menu
+  run_command "$@"
 }
 
 main "$@"
