@@ -1,0 +1,5 @@
+
+payload:
+  - PROCESS-NAME-REGEX,(?i)^codex(?:-plus-plus(?:-manager)?)?\.exe$
+  - PROCESS-PATH-REGEX,(?i)\\AnthropicClaude\\app-[^\\]+\\claude\.exe$
+  - PROCESS-NAME-REGEX,(?i)^claude\.exe$
