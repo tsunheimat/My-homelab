@@ -21,9 +21,6 @@ proxies:
 listeners:
   # hk port: 22000-22999
 
-    port: 22214
-    type: mixed
-    proxy: "ednovas-hk4"
   #nonesun
   - name: "nonesun-hk1"
     port: 22511
