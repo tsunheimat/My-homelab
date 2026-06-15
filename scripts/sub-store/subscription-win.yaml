@@ -148,6 +148,7 @@ proxy-groups:
   - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
   - { name: Vps, type: select, include-all: true, filter: "Vps" }
   - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
+  - { name: socks5, type: select, include-all: true, filter: "socks5",}
 
 # 规则匹配
 rules:
