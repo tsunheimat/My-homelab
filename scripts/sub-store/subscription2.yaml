@@ -40,9 +40,6 @@ listeners:
     proxy: "nonesun-hk4"
   # us port: 23000-23999
 
-    port: 23216
-    type: mixed
-    proxy: "ednovas-us6"
   #nonesun
   - name: "nonesun-us1"
     port: 23511
