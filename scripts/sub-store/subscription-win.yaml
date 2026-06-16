@@ -157,6 +157,7 @@ rules:
   - RULE-SET,ai_client_rule,AI
   - RULE-SET,claude_rule,AI
   - RULE-SET,openai_rule,AI
+  - RULE-SET,ai_mac_rule,AI
   - MATCH,默认代理
 
 # 规则集
@@ -179,6 +180,13 @@ rule-providers:
     behavior: classical
     format: yaml
     url: "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/clash/ai_client/ai_cleint.yaml"
+
+  ai_mac_rule:
+    type: http
+    interval: 86400
+    behavior: classical
+    format: yaml
+    url: "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/clash/ai_client/ai_mac.yaml"
 
 
   claude_rule:

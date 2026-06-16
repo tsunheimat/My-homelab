@@ -1,0 +1,13 @@
+
+payload:
+  - PROCESS-PATH-WILDCARD,/Applications/Codex.app/Contents/*
+  - PROCESS-PATH-WILDCARD,/Applications/Claude.app/Contents/*
+  - PROCESS-NAME,Codex
+  - PROCESS-NAME,Codex (Service)
+  - PROCESS-NAME,codex
+  - PROCESS-NAME,Claude
+  - PROCESS-NAME,Claude Helper
+  - PROCESS-NAME,claude
+  - PROCESS-PATH-WILDCARD,*/bin/codex
+  - PROCESS-PATH-WILDCARD,*/bin/claude
+  - PROCESS-PATH-WILDCARD,*node_modules*/@anthropic-ai/claude-code/*
