@@ -87,6 +87,7 @@ proxy-groups:
           Roy,
           NoneSun,
           Vps,
+          socks5,
           ♻️ 香港自动,
           ♻️ 日本自动,
           ♻️ 狮城自动,
@@ -270,6 +271,8 @@ proxy-groups:
   - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
   - { name: Vps, type: select, include-all: true, filter: "Vps" }
   - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
+  - { name: socks5, type: select, include-all: true, filter: "socks5"}
+  - { name: jimmy, type: select, include-all: true, filter: "jimmy"}
   - {
       name: ednovas-us1,
       type: select,
@@ -426,7 +429,12 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*Nonesun)(?=.*(🇯🇵|日本))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
     }
-    
+  - {
+      name: jimmy-tw1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*jimmy)(?=.*(🇹🇼|台湾))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
+    }
 # 规则匹配
 rules:
   - RULE-SET,private_ip,直连,no-resolve

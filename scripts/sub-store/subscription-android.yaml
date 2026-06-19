@@ -78,7 +78,6 @@ proxy-groups:
       type: select,
       proxies:
         [
-          EdNovas,
           Roy,
           NoneSun,
           Vps,
@@ -99,7 +98,6 @@ proxy-groups:
       type: select,
       proxies:
         [
-          EdNovas,
           Roy,
           NoneSun,
           Vps,
@@ -111,6 +109,12 @@ proxy-groups:
           socks5
         ],
     }
+
+  - { name: socks5, type: select, include-all: true, filter: "socks5"}
+  - { name: 🌐 全部节点, type: select, include-all: true }
+  - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
+  - { name: Vps, type: select, include-all: true, filter: "Vps" }
+  - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
 
   - {
       name: 🇭🇰 香港节点,
@@ -142,22 +146,13 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*(🇹🇼|台湾|TW))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国|中国)).*$",
     }
-  - { name: 🇨🇳 中国节点, type: select, include-all: true, filter: "中国" }
- 
-  - { name: 🌐 全部节点, type: select, include-all: true }
-  - { name: EdNovas, type: select, include-all: true, filter: "EdNovas" }
-  - { name: Roy, type: select, include-all: true, filter: "Roy" }
-  - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
-  - { name: Vps, type: select, include-all: true, filter: "Vps" }
-  - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
-  - { name: socks5, type: select, include-all: true, filter: "socks5"}
-  - { name: jimmy, type: select, include-all: true, filter: "jimmy"}
 
 # 规则匹配
 rules:
   - RULE-SET,private_ip,直连,no-resolve
   - DOMAIN-KEYWORD,tsunhei,DIRECT
   - RULE-SET,ai_client_rule,AI
+  - RULE-SET,ai_android,AI
   - RULE-SET,claude_rule,AI
   - RULE-SET,openai_rule,AI
   - RULE-SET,ai_mac_rule,AI
@@ -190,6 +185,14 @@ rule-providers:
     behavior: classical
     format: yaml
     url: "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/clash/ai_client/ai_mac.yaml"
+
+  ai_android:
+    type: http
+    interval: 86400
+    behavior: classical
+    format: yaml
+    url: "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/clash/ai_client/ai_android.yaml"
+
 
 
   claude_rule:

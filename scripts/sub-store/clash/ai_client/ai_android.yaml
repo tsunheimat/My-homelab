@@ -1,0 +1,41 @@
+payload:
+  # Claude / Anthropic
+  - DOMAIN-SUFFIX,anthropic.com
+  - DOMAIN-SUFFIX,claude.ai
+  - DOMAIN-SUFFIX,anthropicusercontent.com
+  - DOMAIN-SUFFIX,claudeusercontent.com
+  - DOMAIN,cdn.usefathom.com
+
+  # OpenAI / ChatGPT / Codex
+  - DOMAIN-KEYWORD,openai
+  - DOMAIN-SUFFIX,openai.com
+  - DOMAIN-SUFFIX,chatgpt.com
+  - DOMAIN-SUFFIX,auth.openai.com
+  - DOMAIN-SUFFIX,oaistatic.com
+  - DOMAIN-SUFFIX,oaiusercontent.com
+  - DOMAIN-SUFFIX,oaistatsig.com
+  - DOMAIN-SUFFIX,chat.com
+  - DOMAIN-SUFFIX,sora.com
+  - DOMAIN-SUFFIX,openaiapi-site.azureedge.net
+  - PROCESS-NAME,codex
+
+  # Android ChatGPT app
+  - DOMAIN,android.chat.openai.com
+  - PROCESS-NAME,com.openai.chatgpt
+
+  # Claude Android app
+  - PROCESS-NAME,com.anthropic.claude
+
+  # OpenAI CDN / related
+  - DOMAIN-SUFFIX,cdn.openaimerge.com
+  - DOMAIN-SUFFIX,openai.com.cdn.cloudflare.net
+  - DOMAIN,openaiapi-site.azureedge.net
+  - DOMAIN,openaicom.imgix.net
+  - DOMAIN,production-openaicom-storage.azureedge.net
+
+  # Optional but often needed for login/payment/support widgets
+  - DOMAIN-SUFFIX,workos.com
+  - DOMAIN-SUFFIX,workoscdn.com
+  - DOMAIN-SUFFIX,intercom.io
+  - DOMAIN-SUFFIX,intercomcdn.com
+  - DOMAIN-SUFFIX,stripe.com

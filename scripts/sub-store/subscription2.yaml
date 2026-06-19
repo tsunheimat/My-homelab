@@ -77,6 +77,12 @@ listeners:
     type: mixed
     proxy: "nonesun-tw1"
     
+  #jimmy
+  - name: "jimmy-tw1"
+    port: 24611
+    type: mixed
+    proxy: "jimmy-tw1"
+
   # sg port: 25000-25999
   #vps
   - name: "vps-sg1"
@@ -386,6 +392,8 @@ proxy-groups:
   - { name: NoneSun, type: select, include-all: true, filter: "NoneSun" }
   - { name: Vps, type: select, include-all: true, filter: "Vps" }
   - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
+  - { name: socks5, type: select, include-all: true, filter: "socks5"}
+  - { name: jimmy, type: select, include-all: true, filter: "jimmy"}
   - {
       name: nonesun-us1,
       type: select,
@@ -505,6 +513,12 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*socks5)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: jimmy-tw1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*jimmy)(?=.*(🇹🇼|台湾))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
     }
 # 规则匹配
 rules:
