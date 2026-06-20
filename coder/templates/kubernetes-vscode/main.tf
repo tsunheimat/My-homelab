@@ -31,7 +31,7 @@ variable "use_kubeconfig" {
 variable "namespace" {
   type        = string
   description = "The Kubernetes namespace to create workspaces in (must exist prior to creating workspaces). If the Coder host is itself running as a Pod on the same Kubernetes cluster as you are deploying workspaces to, set this to the same namespace."
-  default = "dev"
+  default = "coder"
 }
 
 #k8s settings
@@ -120,7 +120,14 @@ data "coder_parameter" "nfs_mount_path" {
   }
 }
 
-
+data "coder_parameter" "gitlab_host" {
+  name         = "gitlab_host"
+  display_name = "GitLab Host"
+  description  = "The GitLab hostname used for Git HTTPS authentication."
+  type         = "string"
+  default      = "gitlab.tsunhei.com"
+  mutable      = true
+}
 
 #k8s settings
 provider "kubernetes" {
@@ -151,6 +158,12 @@ data "coder_parameter" "selected_apps" {
   option {
     name  = "VS Code Web"
     value = "vscode-web"
+    icon  = "/icon/code.svg"
+  }
+
+  option {
+    name  = "Code Server"
+    value = "code-server"
     icon  = "/icon/code.svg"
   }
 
