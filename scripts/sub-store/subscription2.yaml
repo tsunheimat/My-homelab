@@ -40,6 +40,18 @@ listeners:
     proxy: "nonesun-hk4"
   # us port: 23000-23999
 
+  #socks5
+
+  - name: "socks5-us2"
+    port: 23211
+    type: mixed
+    proxy: "socks5-us2"
+
+  - name: "socks5-us3"
+    port: 23212
+    type: mixed
+    proxy: "socks5-us3"
+
   #nonesun
   - name: "nonesun-us1"
     port: 23511
@@ -63,6 +75,7 @@ listeners:
     port: 23811
     type: mixed
     proxy: "sagit-us1"
+
   # tw port: 24000-24999
 
   #socks5
@@ -513,6 +526,18 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*socks5)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: socks5-us2,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: socks5-us3,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
   - {
       name: jimmy-tw1,

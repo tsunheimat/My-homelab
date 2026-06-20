@@ -273,42 +273,7 @@ proxy-groups:
   - { name: Sagit, type: select, include-all: true, filter: "Sagit" }
   - { name: socks5, type: select, include-all: true, filter: "socks5"}
   - { name: jimmy, type: select, include-all: true, filter: "jimmy"}
-  - {
-      name: ednovas-us1,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-us2,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-us3,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-us4,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-us5,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-us6,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
+
   - {
       name: nonesun-us1,
       type: select,
@@ -339,24 +304,7 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*Sagit)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
-  - {
-      name: ednovas-hk1,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-hk3,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
-  - {
-      name: ednovas-hk4,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
+
   - {
       name: nonesun-hk1,
       type: select,
@@ -381,12 +329,7 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*NoneSun)(?=.*(🇭🇰|香港))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
-  - {
-      name: ednovas-tw1,
-      type: select,
-      include-all: true,
-      filter: "^(?=.*EdNovas)(?=.*(🇹🇼|台湾))(?!.*(🇺🇸|🇺🇲|美国|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
-    }
+
   - {
       name: nonesun-tw1,
       type: select,
@@ -428,6 +371,36 @@ proxy-groups:
       type: select,
       include-all: true,
       filter: "^(?=.*Nonesun)(?=.*(🇯🇵|日本))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: socks5-tw1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇹🇼|台湾))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: socks5-jp1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇯🇵|日本))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: socks5-sg1,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇸🇬|新加坡|狮城))(?!.*(🇭🇰|香港|🇯🇵|日本|🇺🇸|🇺🇲|美国)).*$",
+    }
+  - {
+      name: socks5-us2,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
+    }
+  - {
+      name: socks5-us3,
+      type: select,
+      include-all: true,
+      filter: "^(?=.*socks5)(?=.*(🇺🇸|🇺🇲|美国))(?!.*(🇭🇰|香港|🇯🇵|日本|🇸🇬|新加坡|狮城)).*$",
     }
   - {
       name: jimmy-tw1,
