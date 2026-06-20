@@ -78,7 +78,6 @@ proxy-groups:
       type: select,
       proxies:
         [
-          Roy,
           NoneSun,
           Vps,
           🇨🇳 中国节点,
@@ -98,7 +97,6 @@ proxy-groups:
       type: select,
       proxies:
         [
-          Roy,
           NoneSun,
           Vps,
           🇯🇵 日本节点,
