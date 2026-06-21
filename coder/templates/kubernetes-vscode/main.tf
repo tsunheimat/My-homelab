@@ -156,15 +156,21 @@ data "coder_parameter" "selected_apps" {
   mutable      = true # Allows users to add/remove apps later by editing the workspace
   
   option {
+    name  = "VS Code"
+    value = "vscode"
+    icon  = local.vscode_desktop_icon 
+  }
+
+  option {
     name  = "VS Code Web"
     value = "vscode-web"
-    icon  = "/icon/code.svg"
+    icon  = local.vscode_web_icon
   }
 
   option {
     name  = "Code Server"
     value = "code-server"
-    icon  = "/icon/code.svg"
+    icon  = local.code_server_icon
   }
 
   option {
@@ -177,6 +183,10 @@ data "coder_parameter" "selected_apps" {
 
 # 2. Extract the list into a local variable for easy reading
 locals {
+  vscode_web_icon     = "https://cdn.jsdelivr.net/gh/tsunheimat/My-homelab@main/coder/icon/vscode-web-coder.svg"
+  code_server_icon    = "https://cdn.jsdelivr.net/gh/tsunheimat/My-homelab@main/coder/icon/code-server-coder.svg"
+  vscode_desktop_icon = "https://cdn.jsdelivr.net/gh/tsunheimat/My-homelab@main/coder/icon/vscode-desktop-coder.svg"
+
   apps_list = jsondecode(data.coder_parameter.selected_apps.value)
 }
 
@@ -224,11 +234,11 @@ resource "coder_agent" "main" {
   startup_script          = replace(<<-EOT
     set -e
 
-    rm -f "$HOME/.git-credentials"
-    rm -f "$(printf '%s\r' "$HOME/.git-credentials")"
-    git config --global credential.helper store
-    printf '%s\n' "https://oauth2:${data.coder_external_auth.gitlab.access_token}@${data.coder_parameter.gitlab_host.value}" > "$HOME/.git-credentials"
-    chmod 600 "$HOME/.git-credentials"
+    #rm -f "$HOME/.git-credentials"
+    #rm -f "$(printf '%s\r' "$HOME/.git-credentials")"
+    #git config --global credential.helper store
+    #printf '%s\n' "https://oauth2:${data.coder_external_auth.gitlab.access_token}@${data.coder_parameter.gitlab_host.value}" > "$HOME/.git-credentials"
+    #chmod 600 "$HOME/.git-credentials"
     git config --global user.name "${data.coder_workspace_owner.me.name}"
     git config --global user.email "${data.coder_workspace_owner.me.email}"
   EOT
