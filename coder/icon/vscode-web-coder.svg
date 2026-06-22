@@ -19,13 +19,13 @@
     </g>
   </g>
   <g filter="url(#badge_shadow)">
-    <rect x="150" y="150" width="90" height="90" rx="24" fill="#4338ca"/>
-    <circle cx="196" cy="196" r="28" fill="none" stroke="#ffffff" stroke-width="7"/>
-    <path d="M168 196h56M196 168c8 8 12 18 12 28s-4 20-12 28M196 168c-8 8-12 18-12 28s4 20 12 28" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+    <rect x="118" y="118" width="130" height="130" rx="34" fill="#4338ca" stroke="#ffffff" stroke-width="10"/>
+    <circle cx="183" cy="183" r="43" fill="none" stroke="#ffffff" stroke-width="11"/>
+    <path d="M140 183h86M183 140c13 13 20 28 20 43s-7 30-20 43M183 140c-13 13-20 28-20 43s7 30 20 43" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
   </g>
   <defs>
-    <filter id="badge_shadow" x="136" y="140" width="118" height="118" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#001b30" flood-opacity="0.28"/>
+    <filter id="badge_shadow" x="102" y="108" width="160" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#001b30" flood-opacity="0.32"/>
     </filter>
     <filter id="filter0_d_2115_1915" x="-8.48894" y="53.5224" width="272.822" height="210.149" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feFlood flood-opacity="0" result="BackgroundImageFix"/>

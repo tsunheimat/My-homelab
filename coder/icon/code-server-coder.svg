@@ -19,16 +19,16 @@
     </g>
   </g>
   <g filter="url(#badge_shadow)">
-    <rect x="150" y="150" width="90" height="90" rx="24" fill="#087f5b"/>
-    <rect x="168" y="172" width="56" height="20" rx="6" fill="none" stroke="#ffffff" stroke-width="7"/>
-    <rect x="168" y="202" width="56" height="20" rx="6" fill="none" stroke="#ffffff" stroke-width="7"/>
-    <circle cx="180" cy="182" r="3.6" fill="#ffffff"/>
-    <circle cx="180" cy="212" r="3.6" fill="#ffffff"/>
-    <path d="M192 182h20M192 212h20" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+    <rect x="118" y="118" width="130" height="130" rx="34" fill="#087f5b" stroke="#ffffff" stroke-width="10"/>
+    <rect x="140" y="145" width="86" height="32" rx="9" fill="none" stroke="#ffffff" stroke-width="11"/>
+    <rect x="140" y="190" width="86" height="32" rx="9" fill="none" stroke="#ffffff" stroke-width="11"/>
+    <circle cx="156" cy="161" r="6" fill="#ffffff"/>
+    <circle cx="156" cy="206" r="6" fill="#ffffff"/>
+    <path d="M174 161h34M174 206h34" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
   </g>
   <defs>
-    <filter id="badge_shadow" x="136" y="140" width="118" height="118" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#001b30" flood-opacity="0.28"/>
+    <filter id="badge_shadow" x="102" y="108" width="160" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#001b30" flood-opacity="0.32"/>
     </filter>
     <filter id="filter0_d_2115_1915" x="-8.48894" y="53.5224" width="272.822" height="210.149" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feFlood flood-opacity="0" result="BackgroundImageFix"/>
