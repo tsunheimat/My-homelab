@@ -1,0 +1,86 @@
+# Keeps the vendored Coder modules in coder/modules/ in sync with upstream coder/registry.
+#
+# For each module it: discovers the latest upstream release tag, re-vendors the PRISTINE
+# upstream files, re-applies the tiny icon-only patch (coder/patches/<module>-icon.patch),
+# runs `terraform validate`, and opens a PR. Nothing reaches the modules without review.
+#
+# Why a patch (not edits in place): the vendored tree is meant to stay byte-identical to
+# upstream except for the icon variable, so each upstream bump is a clean re-vendor + re-patch.
+# If `git apply` ever fails (upstream refactored the icon area), the job fails loudly — then
+# re-export the patch from the new upstream and commit it.
+name: sync-coder-modules
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [code-server, vscode-web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover latest upstream release tag
+        id: ref
+        run: |
+          set -euo pipefail
+          M="${{ matrix.module }}"
+          LATEST=$(git ls-remote --tags --refs https://github.com/coder/registry \
+                     "refs/tags/release/coder/$M/v*" \
+                   | sed 's#.*/##' | sort -V | tail -1)
+          test -n "$LATEST"
+          TAG="release/coder/$M/$LATEST"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest $M tag: $TAG"
+
+      - name: Re-vendor pristine upstream + re-apply icon patch
+        run: |
+          set -euo pipefail
+          M="${{ matrix.module }}"
+          TAG="${{ steps.ref.outputs.tag }}"
+          tmp=$(mktemp -d)
+          git clone --depth 1 --branch "$TAG" https://github.com/coder/registry "$tmp"
+          rsync -a --delete --exclude UPSTREAM_REF \
+            "$tmp/registry/coder/modules/$M/" "coder/modules/$M/"
+          chmod +x "coder/modules/$M/run.sh"
+          printf '%s\n' "$TAG" > "coder/modules/$M/UPSTREAM_REF"
+          # Strict apply first; fall back to fuzzy apply; if both fail, the job fails on purpose.
+          git apply "coder/patches/$M-icon.patch" \
+            || patch -p1 --fuzz=3 < "coder/patches/$M-icon.patch"
+
+      - name: terraform validate (module standalone)
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: |
+          set -euo pipefail
+          M="${{ matrix.module }}"
+          terraform -chdir="coder/modules/$M" init -backend=false -input=false
+          terraform -chdir="coder/modules/$M" validate
+
+      - name: Open sync PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/sync-${{ matrix.module }}
+          add-paths: coder/modules/${{ matrix.module }}/**
+          commit-message: "chore(coder): re-vendor ${{ matrix.module }}, re-apply icon patch"
+          title: "chore(coder): sync ${{ matrix.module }} to ${{ steps.ref.outputs.tag }}"
+          body: |
+            Automated re-vendor of the Coder module `${{ matrix.module }}`.
+
+            - Re-vendored **pristine** upstream at `${{ steps.ref.outputs.tag }}`
+            - Re-applied `coder/patches/${{ matrix.module }}-icon.patch`
+            - `terraform validate` passed
+
+            If the icon patch ever conflicts (upstream refactored the icon block), this job
+            fails instead of opening a PR — re-export the patch from the new upstream tree and
+            commit it, then re-run.

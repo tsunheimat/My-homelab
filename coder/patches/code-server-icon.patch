@@ -1,0 +1,34 @@
+diff --git a/coder/modules/code-server/main.tf b/coder/modules/code-server/main.tf
+--- a/coder/modules/code-server/main.tf
++++ b/coder/modules/code-server/main.tf
+@@ -30,6 +30,12 @@
+   type        = string
+   description = "The display name for the code-server application."
+   default     = "code-server"
++}
++
++variable "icon" {
++  type        = string
++  description = "The icon for the code-server application."
++  default     = "/icon/code.svg"
+ }
+ 
+ variable "slug" {
+@@ -170,7 +176,7 @@
+ resource "coder_script" "code-server" {
+   agent_id     = var.agent_id
+   display_name = "code-server"
+-  icon         = "/icon/code.svg"
++  icon         = var.icon
+   script = templatefile("${path.module}/run.sh", {
+     VERSION : var.install_version,
+     EXTENSIONS : join(",", var.extensions),
+@@ -210,7 +216,7 @@
+   slug         = var.slug
+   display_name = var.display_name
+   url          = "http://localhost:${var.port}/${var.folder != "" ? "?folder=${urlencode(var.folder)}" : var.workspace != "" ? "?workspace=${urlencode(var.workspace)}" : ""}"
+-  icon         = "/icon/code.svg"
++  icon         = var.icon
+   subdomain    = var.subdomain
+   share        = var.share
+   order        = var.order

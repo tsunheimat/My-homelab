@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "description": "Coder vscode-desktop-core registry module (no fork needed; upstream exposes coder_app_icon)",
+      "matchManagers": ["terraform"],
+      "matchPackageNames": ["registry.coder.com/coder/vscode-desktop-core/coder"]
+    }
+  ]
+}

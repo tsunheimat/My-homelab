@@ -1,0 +1,34 @@
+diff --git a/coder/modules/vscode-web/main.tf b/coder/modules/vscode-web/main.tf
+--- a/coder/modules/vscode-web/main.tf
++++ b/coder/modules/vscode-web/main.tf
+@@ -24,6 +24,12 @@
+   type        = string
+   description = "The display name for the VS Code Web application."
+   default     = "VS Code Web"
++}
++
++variable "icon" {
++  type        = string
++  description = "The icon for the VS Code Web application."
++  default     = "/icon/code.svg"
+ }
+ 
+ variable "slug" {
+@@ -174,7 +180,7 @@
+ resource "coder_script" "vscode-web" {
+   agent_id     = var.agent_id
+   display_name = "VS Code Web"
+-  icon         = "/icon/code.svg"
++  icon         = var.icon
+   script = templatefile("${path.module}/run.sh", {
+     PORT : var.port,
+     LOG_PATH : var.log_path,
+@@ -218,7 +224,7 @@
+   slug         = var.slug
+   display_name = var.display_name
+   url          = local.url
+-  icon         = "/icon/code.svg"
++  icon         = var.icon
+   subdomain    = var.subdomain
+   share        = var.share
+   order        = var.order

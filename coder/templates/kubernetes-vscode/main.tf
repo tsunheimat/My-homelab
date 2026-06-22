@@ -152,13 +152,13 @@ data "coder_parameter" "selected_apps" {
   
   form_type = "multi-select"
   # Set your default selections here (must be JSON encoded)
-  default      = jsonencode(["vscode-web", "filebrowser"]) 
+  default      = jsonencode(["vscode", "vscode-web", "filebrowser"])
   mutable      = true # Allows users to add/remove apps later by editing the workspace
   
   option {
-    name  = "VS Code"
+    name  = "VS Code Desktop"
     value = "vscode"
-    icon  = local.vscode_desktop_icon 
+    icon  = local.vscode_desktop_icon
   }
 
   option {
@@ -191,33 +191,52 @@ locals {
 }
 
 
-#application: vscode
+#application: VS Code Desktop
+module "vscode-desktop" {
+  count                  = contains(local.apps_list, "vscode") ? data.coder_workspace.me.start_count : 0
+  source                 = "registry.coder.com/coder/vscode-desktop-core/coder"
+  version                = "1.0.2"
+  agent_id               = coder_agent.main.id
+  coder_app_icon         = local.vscode_desktop_icon
+  coder_app_slug         = "vscode"
+  coder_app_display_name = "VS Code Desktop"
+  coder_app_order        = 1
+  folder                 = "/home/coder/repos"
+  protocol               = "vscode"
+
+}
+
+#application: vscode-web
+# Vendored module lives in coder/modules/vscode-web (single source of truth, shared across
+# templates). Sourced over git so `coder templates push` works (local ../ paths outside the
+# template dir are NOT uploaded in the push tarball). Pin ?ref to a tag for hard reproducibility.
 module "vscode-web" {
   count          = contains(local.apps_list, "vscode-web") ? data.coder_workspace.me.start_count : 0
-  source         = "registry.coder.com/coder/vscode-web/coder"
-  version        = "1.5.0"
+  source         = "git::https://github.com/tsunheimat/My-homelab.git//coder/modules/vscode-web?ref=main"
   agent_id       = coder_agent.main.id
   subdomain      = false
   accept_license = true
   display_name  = "vscode-web"
-  extensions = ["openai.chatgpt","kilocode.kilo-code","eamodio.gitlens"]
-  folder = "/home/coder/repos"
-  use_cached = true
-  
+  icon          = local.vscode_web_icon
+  extensions    = ["openai.chatgpt", "kilocode.kilo-code", "eamodio.gitlens"]
+  folder        = "/home/coder/repos"
+  use_cached    = true
 }
 
 #application: code-server
+# Vendored module lives in coder/modules/code-server (see vscode-web note above).
 module "code-server" {
-  count          = contains(local.apps_list, "code-server") ? data.coder_workspace.me.start_count : 0
-  source         = "registry.coder.com/coder/code-server/coder"
-  version        = "1.4.2"
-  agent_id       = coder_agent.main.id
-  subdomain      = false
+  count           = contains(local.apps_list, "code-server") ? data.coder_workspace.me.start_count : 0
+  source          = "git::https://github.com/tsunheimat/My-homelab.git//coder/modules/code-server?ref=main"
+  agent_id        = coder_agent.main.id
+  subdomain       = false
   additional_args = "--disable-workspace-trust"
-  open_in = "tab"
-  folder = "/home/coder/repos"
-  extensions = ["kilocode.kilo-code","eamodio.gitlens"]
-  use_cached = true
+  open_in         = "tab"
+  display_name    = "code-server"
+  icon            = local.code_server_icon
+  folder          = "/home/coder/repos"
+  extensions      = ["kilocode.kilo-code", "eamodio.gitlens"]
+  use_cached      = true
   use_cached_extensions = true
 }
 
@@ -229,6 +248,14 @@ module "code-server" {
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
+
+  display_apps {
+    vscode                = false
+    vscode_insiders       = false
+    web_terminal          = true
+    ssh_helper            = true
+    port_forwarding_helper = true
+  }
 
   startup_script_behavior = "non-blocking"
   startup_script          = replace(<<-EOT
