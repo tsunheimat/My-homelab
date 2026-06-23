@@ -250,7 +250,7 @@ resource "coder_agent" "main" {
   arch = "amd64"
 
   display_apps {
-    vscode                = false
+    vscode                = true
     vscode_insiders       = false
     web_terminal          = true
     ssh_helper            = true
