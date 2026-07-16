@@ -545,11 +545,19 @@ proxy-groups:
       include-all: true,
       filter: "^(?=.*jimmy)(?=.*(🇹🇼|台湾))(?!.*(🇭🇰|香港|🇸🇬|新加坡|狮城|🇺🇸|🇺🇲|美国)).*$",
     }
+  - { name: proxy1, type: select, include-all: true, filter: "socks5"}
+  - { name: proxy2, type: select, include-all: true, filter: "socks5"}
+  - { name: proxy3, type: select, include-all: true, filter: "socks5"}
+  - { name: proxy4, type: select, include-all: true, filter: "socks5"}
+  - { name: proxy5, type: select, include-all: true, filter: "socks5"}
+      
 # 规则匹配
 rules:
   - RULE-SET,private_ip,直连,no-resolve
-  - DOMAIN-KEYWORD,tsunhei,DIRECT
-  - MATCH,直连
+  - RULE-SET,telegram_ip,直连,no-resolve
+  - RULE-SET,github_domain,直连,no-resolve
+  - RULE-SET,direct_rule,直连,no-resolve
+
 
 # 规则集
 ## type：可选http/file/inline  behavior：可选domain/ipcidr/classical format：可选yaml/text/mrs
@@ -565,3 +573,35 @@ rule-providers:
       <<: *ip,
       url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.mrs",
     }
+  telegram_ip:
+    {
+      <<: *ip,
+      url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs",
+    }
+  github_domain:
+    {
+      <<: *domain,
+      url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github.mrs",
+    }
+  direct_rule:
+    type: http
+    interval: 86400
+    behavior: classical
+    format: yaml
+    url: "https://raw.githubusercontent.com/tsunheimat/My-homelab/refs/heads/main/scripts/sub-store/clash/ai_client/direct.yaml"
+
+
+  claude_rule:
+    type: http
+    interval: 86400
+    behavior: classical
+    format: yaml
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Claude/Claude.yaml"
+
+  openai_rule:
+    type: http
+    interval: 86400
+    behavior: classical
+    format: yaml
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml"
+
