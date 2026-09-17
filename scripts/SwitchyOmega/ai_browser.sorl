@@ -1,0 +1,23 @@
+[SwitchyOmega Conditions]
+
+; OpenAI / ChatGPT / Codex Web
+*.openai.com
+*.chatgpt.com
+*.oaistatic.com
+*.oaiusercontent.com
+*.oaistatsig.com
+*.chat.com
+*.sora.com
+
+; Claude / Anthropic
+*.anthropic.com
+*.claude.ai
+*.anthropicusercontent.com
+*.claudeusercontent.com
+
+; OpenAI CDN / related
+*.cdn.openaimerge.com
+*.openai.com.cdn.cloudflare.net
+*.openaiapi-site.azureedge.net
+openaicom.imgix.net
+production-openaicom-storage.azureedge.net
